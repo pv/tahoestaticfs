@@ -7,7 +7,7 @@ import struct
 import fcntl
 
 from Crypto.Cipher import AES
-from Crypto.Hash import HMAC
+from Crypto.Hash import HMAC, SHA256, SHA512
 from Crypto.Util import Counter
 from Crypto import Random
 
@@ -17,10 +17,17 @@ class CacheDB(object):
         if not os.path.isdir(path):
             raise IOError("Cache directory is not an existing directory")
         self.path = path
+        self.key = key
 
 
-class CryptConsistencyError(IOError):
-    pass
+    def _get_file_from_filecap(self, cap):
+        return HMAC.new(self.key, msg=b"FILE:"+cap, digestmod=SHA512).hexdigest()
+
+    def _get_file_from_fileinfocap(self, cap):
+        return HMAC.new(self.key, msg=b"FILEINFO:"+cap, digestmod=SHA512).hexdigest()
+
+    def _get_file_from_dircap(self, cap):
+        return HMAC.new(self.key, msg=b"DIR:"+cap, digestmod=SHA512).hexdigest()
 
 
 class CryptFile(object):
@@ -28,9 +35,12 @@ class CryptFile(object):
     File encrypted with a key in AES-CTR mode.
     """
 
-    HEADER_SIZE = 3*16
+    HEADER_SIZE = 16
 
     def __init__(self, path, key, mode='r+b'):
+        if len(key) != 32:
+            raise ValueError("Key must be 32 bytes")
+
         if mode in ('rb', 'r+b', 'w+b'):
             self.fp = open(path, mode)
         else:
@@ -42,6 +52,7 @@ class CryptFile(object):
         else:
             fcntl.flock(self.fp, fcntl.LOCK_EX)
 
+        self.mode = mode
         self.key = key
 
         assert AES.block_size == 16
@@ -49,19 +60,10 @@ class CryptFile(object):
         if mode in 'w+b':
             # Generate new nonce
             nonce = Random.new().read(16)
-            salt = Random.new().read(16)
             self.fp.write(nonce)
-            self.fp.write(salt)
-            mac = HMAC.new(salt + key, msg=nonce).digest()
-            self.fp.write(mac)
         else:
-            # Read (and verify) from data in file
+            # Read nonce from file
             nonce = self.fp.read(16)
-            salt = self.fp.read(16)
-            mac = self.fp.read(16)
-            verifier_mac = HMAC.new(salt + key, msg=nonce).digest()
-            if mac != verifier_mac:
-                raise CryptConsistencyError("MAC of nonce is invalid")
 
         self.nonce = _unpack_uint128(nonce)
         self.offset = 0
