@@ -7,7 +7,7 @@ import threading
 from Crypto import Random
 from nose.tools import assert_equal, assert_raises
 
-from tahoefuse.cachedb import CryptFile
+from tahoefuse.crypto import CryptFile
 
 
 class TestCryptFile(object):
