@@ -4,6 +4,7 @@ Cache metadata and data of a directory tree.
 
 import os
 import struct
+import fcntl
 
 from Crypto.Cipher import AES
 from Crypto.Hash import HMAC
@@ -29,11 +30,17 @@ class CryptFile(object):
 
     HEADER_SIZE = 3*16
 
-    def __init__(self, path, key, mode='r'):
+    def __init__(self, path, key, mode='r+b'):
         if mode in ('rb', 'r+b', 'w+b'):
             self.fp = open(path, mode)
         else:
             raise IOError("Unsupported mode %r" % (mode,))
+
+        # BSD locking on the file; only one fd can write at a time
+        if mode == 'rb':
+            fcntl.flock(self.fp, fcntl.LOCK_SH)
+        else:
+            fcntl.flock(self.fp, fcntl.LOCK_EX)
 
         self.key = key
 
@@ -65,7 +72,7 @@ class CryptFile(object):
         elif whence == 1:
             offset = self.offset + offset
         elif whence == 2:
-            offset = self.length + offset
+            offset = self._get_file_size() - self.HEADER_SIZE + offset
         else:
             raise IOError("Invalid whence")
         if offset < 0:
@@ -99,13 +106,13 @@ class CryptFile(object):
             return b""
 
         # Read and decrypt data
-        decryptor = self._get_AES_at(offset)
+        decryptor = self._get_AES_at(offset, encrypt=False)
         self.fp.seek(self.HEADER_SIZE + offset)
         return decryptor.decrypt(self.fp.read(size))
 
     def _write(self, data, offset):
         # Synchronize encryptor at start position
-        encryptor = self._get_AES_at(offset)
+        encryptor = self._get_AES_at(offset, encrypt=True)
 
         # Write output
         self.fp.seek(self.HEADER_SIZE + offset)
@@ -121,23 +128,32 @@ class CryptFile(object):
         self.offset += len(data)
         return data
 
-    def _null_pad(self, size):
-        file_size = self._get_file_size()
-        pos = file_size - self.HEADER_SIZE
-        stream = NullStream(size - pos)
-        self._write(iter(stream), pos)
-
     def write(self, data):
         self.fp.seek(0, 2)
         file_size = self.fp.tell()
-        if self.offset + self.HEADER_SIZE > file_size:
-            self._null_pad(file_size)
+        if file_size < self.offset + self.HEADER_SIZE:
+            # Write past end
+            stream = NullStream(self.offset + self.HEADER_SIZE - file_size)
+            self._write(iter(stream), file_size - self.HEADER_SIZE)
 
         self._write(data, self.offset)
         self.offset += len(data)
 
     def truncate(self, size):
-        self.fp.truncate(self.HEADER_SIZE + size)
+        file_size = self._get_file_size()
+        self.fp.truncate(size + self.HEADER_SIZE)
+
+        if file_size < size + self.HEADER_SIZE:
+            # Truncate increased file size: add null padding
+            stream = NullStream(size + self.HEADER_SIZE - file_size)
+            self._write(iter(stream), file_size - self.HEADER_SIZE)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
 
     def close(self):
         self.fp.close()
