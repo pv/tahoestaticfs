@@ -243,9 +243,7 @@ class CryptFile(object):
         if self.key is None:
             return
         if self.mode != 'rb':
-            self._flush_block()
-            self.fp.seek(0)
-            self.fp.write(struct.pack("<Q", self.data_size))
+            self.flush()
         self.fp.close()
         self.key = None
 
