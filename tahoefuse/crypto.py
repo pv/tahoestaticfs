@@ -7,8 +7,6 @@ import struct
 import fcntl
 
 from Crypto.Cipher import AES
-from Crypto.Hash import HMAC, SHA256, SHA512
-from Crypto.Util import Counter
 from Crypto import Random
 
 
@@ -263,17 +261,3 @@ class NullString(object):
             return b"\x00" * len(xrange(*k.indices(self.size)))
         else:
             raise IndexError("invalid index")
-
-
-def _pack_uint128(num):
-    return (struct.pack('<Q', num & 0xffffffffffffffff)
-            + struct.pack('<Q', (num >> 64) & 0xffffffffffffffff))
-
-
-def _unpack_uint128(s):
-    return (struct.unpack('<Q', s[:8])[0]
-            | (struct.unpack('<Q', s[8:])[0] << 64))
-
-
-def _wrapsum_uint128(a, b):
-    return (a + b) % 0x100000000000000000000000000000000
