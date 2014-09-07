@@ -240,7 +240,7 @@ class BlockCachedFile(object):
         start_pos = j * self.block_size
         end_pos = end * self.block_size
         if start_pos < self.cache_size:
-            return (start_pos, max(self.cache_size, end_pos) - start_pos)
+            return (start_pos, min(self.cache_size, end_pos) - start_pos)
 
         return None
 
@@ -255,13 +255,13 @@ class BlockCachedFile(object):
                 start_pos = start_block * self.block_size
                 end_pos = (start_block + 1) * self.block_size
                 if start_pos < self.cache_size:
-                    return (start_pos, max(self.cache_size, end_pos) - start_pos)
+                    return (start_pos, min(self.cache_size, end_pos) - start_pos)
 
             if ((offset + length) % self.block_size) != 0 and not self.cache_map[end_block - 1]:
                 start_pos = (end_block - 1) * self.block_size
                 end_pos = end_block * self.block_size
                 if start_pos < self.cache_size:
-                    return (start_pos, max(self.cache_size, end_pos) - start_pos)
+                    return (start_pos, min(self.cache_size, end_pos) - start_pos)
 
         # No reads required
         return None
