@@ -34,7 +34,24 @@ class BlockCachedFile(object):
     def save_state(self, f):
         f.truncate(0)
         f.seek(0)
-        f.write(struct.pack('>QQQQ', self.actual_size, self.block_size, self.cache_size, self.cache_size))
+        f.write(struct.pack('<QQQQ', self.actual_size, self.block_size, self.cache_size, self.first_uncached_block))
+        f.write(self.cache_map.to_bytes())
+
+    @classmethod
+    def restore_state(cls, f, state_file):
+        s = state_file.read(4*8)
+        actual_size, block_size, cache_size, first_uncached_block = \
+            struct.unpack('<QQQQ', s)
+        cache_map = BitArray.from_bytes(state_file.read())
+
+        self = cls.__new__(cls)
+        self.f = f
+        self.actual_size = actual_size
+        self.block_size = block_size
+        self.cache_size = cache_size
+        self.first_uncached_block = first_uncached_block
+        self.cache_map = cache_map
+        return self
 
     def _get_block_range(self, offset, length, inner=False):
         """
@@ -271,19 +288,20 @@ class BitArray(object):
     @classmethod
     def from_bytes(cls, s):
         n = struct.unpack('<Q', s[:8])[0]
-        arr = BitArray(n)
-        arr.value[:] = np.frombuffer(s[8:], dtype=np.uint8)
-        return arr
+        self = cls.__new__(cls)
+        self.n = n
+        self.value = np.fromstring(s[8:], dtype=np.uint8)
+        return self
 
     def __getitem__(self, i):
         if i < 0 or i >= self.n:
-            raise ValueError("out of bounds get")
+            raise IndexError("out of bounds get")
         n, j = divmod(i, 8)
         return bool((self.value[n] >> j) & 0x1)
 
     def __setitem__(self, i, value):
         if i < 0 or i >= self.n:
-            raise ValueError("out of bounds set")
+            raise IndexError("out of bounds set")
         n, j = divmod(i, 8)
         r = (0x1 << j)
         if value:
