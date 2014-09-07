@@ -12,6 +12,7 @@ from Crypto import Random
 
 BLOCK_SIZE = 131072
 
+
 class CryptFile(object):
     """
     File encrypted with a key in AES-CBC mode, in BLOCK_SIZE blocks,
@@ -22,6 +23,8 @@ class CryptFile(object):
     HEADER_SIZE = 8
 
     def __init__(self, path, key, mode='r+b', block_size=BLOCK_SIZE):
+        self.key = None
+
         if len(key) != 32:
             raise ValueError("Key must be 32 bytes")
 
@@ -48,8 +51,12 @@ class CryptFile(object):
         if mode == 'w+b':
             self.data_size = 0
         else:
-            sz = self.fp.read(8)
-            self.data_size = struct.unpack('<Q', sz)[0]
+            try:
+                sz = self.fp.read(8)
+                self.data_size = struct.unpack('<Q', sz)[0]
+            except (IOError, struct.error):
+                self.fp.close()
+                raise ValueError("invalid data in file")
 
         self.current_block = -1
         self.block_cache = b""
