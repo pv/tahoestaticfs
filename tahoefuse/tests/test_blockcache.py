@@ -183,7 +183,7 @@ class TestBlockCachedFile(object):
 
     def test_on_top_cryptfile(self):
         tmpf = CryptFile(self.file_name, key=b"a"*32, mode='w+b')
-        f = BlockCachedFile(tmpf, len(self.cache_data), block_size=7)
+        f = BlockCachedFile(tmpf, len(self.cache_data), block_size=37)
 
         self._do_write(f, 0, b"b"*1237)
         assert_equal(self._do_read(f, 0, 15), b"b"*15)
