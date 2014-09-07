@@ -7,7 +7,7 @@ import traceback
 import fuse
 
 from tahoefuse.cachedb import CacheDB
-from tahoefuse.tahoeio import TahoeIO, HTTPError
+from tahoefuse.tahoeio import TahoeConnection
 
 
 class TahoeFuseFS(fuse.Fuse):
@@ -31,72 +31,53 @@ class TahoeFuseFS(fuse.Fuse):
         if not os.path.isdir(options.cache):
             os.makedirs(options.cache)
 
-        self.cache = CacheDB(options.cache, "a"*32)
-
         node_url = options.node_url.decode(sys.getfilesystemencoding())
         rootcap = self.rootcap.decode('ascii')
-        self.io = TahoeIO(node_url, rootcap)
         del self.rootcap
+
+        io = TahoeConnection(node_url, rootcap)
+        self.cache = CacheDB(options.cache, "a"*32, io)
 
         fuse.Fuse.main(self, args)
 
     def getattr(self, path):
         try:
-            upath = path.decode(sys.getfilesystemencoding())
-        except UnicodeError, e:
-            # all tahoe files have valid unicode names
-            return -errno.ENOENT
+            info = self.cache.getattr(path)
+        except:
+            traceback.print_exc()
+            raise
 
-        try:
-            info = self.io.connection.get_info(upath)
-        except HTTPError, err:
-            if err.code in (404,):
-                return -errno.ENOENT
-            raise IOError(err)
-
-        if info[0] == u'dirnode':
+        if info['type'] == 'dir':
             st = fuse.Stat()
             st.st_mode = stat.S_IFDIR | stat.S_IRUSR | stat.S_IXUSR
             st.st_nlink = 1
-        elif info[0] == u'filenode':
+        elif info['type'] == u'file':
             st = fuse.Stat()
             st.st_mode = stat.S_IFREG | stat.S_IRUSR
             st.st_nlink = 1
-            st.st_size = info[1][u'size']
-            st.st_mtime = info[1][u'metadata'][u'tahoe'][u'linkmotime']
-            st.st_ctime = info[1][u'metadata'][u'tahoe'][u'linkcrtime']
+            st.st_size = info['size']
+            st.st_mtime = info['mtime']
+            st.st_ctime = info['ctime']
         else:
             return -errno.EBADF
 
         return st
 
     def readdir(self, path, offset):
-        try:
-            upath = path.decode(sys.getfilesystemencoding())
-        except UnicodeError, e:
-            # all tahoe files have valid unicode names
-            return -errno.ENOENT
+        entries = [fuse.Direntry(b'.'), 
+                   fuse.Direntry(b'..')]
 
-        try:
-            entries = [fuse.Direntry(b'.'), 
-                       fuse.Direntry(b'..')]
-
-            encoding = sys.getfilesystemencoding()
-            for c in self.io.listdir(upath):
-                entries.append(fuse.Direntry(c.encode(encoding)))
-            return entries
-        except:
-            traceback.print_exc()
-            raise
+        encoding = sys.getfilesystemencoding()
+        for c in self.cache.listdir(path):
+            entries.append(fuse.Direntry(c.encode(encoding)))
+        return entries
 
     def read(self, path, size, offset):
         try:
-            upath = path.decode(sys.getfilesystemencoding())
-        except UnicodeError, e:
-            # all tahoe files have valid unicode names
-            return -errno.ENOENT
-
-        return self.io.connection.get_content(upath, offset, size).read()
+            return self.cache.read(path, offset, size)
+        except:
+            traceback.print_exc()
+            raise
 
     def open(self, path, flags):
         try:
