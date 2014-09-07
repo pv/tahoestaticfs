@@ -76,8 +76,8 @@ class CryptFile(object):
         if off == 0:
             self.fp.write(encryptor.encrypt(bytes(self.block_cache)))
         else:
-            # insert padding
-            self.fp.write(encryptor.encrypt(bytes(self.block_cache) + b"\x00"*(16-off)))
+            # insert random padding
+            self.fp.write(encryptor.encrypt(bytes(self.block_cache) + self._random.read(16-off)))
 
         self.block_dirty = False
 
