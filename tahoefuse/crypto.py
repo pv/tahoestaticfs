@@ -7,10 +7,39 @@ import struct
 import fcntl
 
 from Crypto.Cipher import AES
+from Crypto.Hash import HMAC, SHA256
 from Crypto import Random
 
 
 BLOCK_SIZE = 131072
+
+
+def HKDF_SHA256_extract(salt, key):
+    """
+    HKDF-SHA256 extract
+    """
+    prk = HMAC.new(salt, msg=key, digestmod=SHA256).digest()
+    return prk
+
+def HKDF_SHA256_expand(prk, info, length):
+    """
+    32-bit HKDF extract + expand
+    """
+    if len(prk) != 32:
+        raise ValueError("Invalid prk length")
+
+    n, off = divmod(length, 32)
+    if off != 0:
+        n += 1
+    if n >= 256:
+        raise ValueError("Too long data")
+
+    data = []
+    t = b""
+    for j in range(n):
+        t = HMAC.new(prk, msg=t + info + chr(j), digestmod=SHA256).digest()
+        data.append(t)
+    return b"".join(t)[:length]
 
 
 class CryptFile(object):

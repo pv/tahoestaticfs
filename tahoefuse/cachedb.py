@@ -14,7 +14,7 @@ from Crypto import Random
 import pbkdf2
 
 from tahoefuse.tahoeio import HTTPError, TahoeConnection
-from tahoefuse.crypto import CryptFile
+from tahoefuse.crypto import CryptFile, HKDF_SHA256_extract, HKDF_SHA256_expand
 from tahoefuse.blockcache import BlockCachedFile
 
 
@@ -41,20 +41,26 @@ class CacheDB(object):
         try:
             with open(salt_fn, 'rb') as f:
                 salt = f.read(32)
-                if len(salt) != 32:
+                salt_hkdf = f.read(32)
+                if len(salt) != 32 or len(salt_hkdf) != 32:
                     raise ValueError()
         except (IOError, ValueError):
             # Start with new salt
             salt = Random.new().read(32)
+            salt_hkdf = Random.new().read(32)
             with open(salt_fn, 'wb') as f:
                 f.write(salt)
+                f.write(salt_hkdf)
 
         # Derive key
         d = pbkdf2.PBKDF2(passphrase=rootcap_hash,
                           salt=salt,
                           iterations=100000,
                           digestmodule=SHA256)
-        self.key = d.read(32)
+        key = d.read(32)
+
+        # HKDF private key material for per-file keys
+        self.prk = HKDF_SHA256_extract(salt=salt_hkdf, key=key)
 
     def get_upath_parent(self, path):
         return self.get_upath(os.path.dirname(os.path.normpath(path)))
@@ -90,20 +96,17 @@ class CacheDB(object):
         path = upath.encode('utf-8')
         nonpath = b"//\x00" # cannot occur in path, which is normalized
 
-        # Generate filename
-        d = HMAC.new(self.key, msg=path, digestmod=SHA512)
+        # Generate per-file key material via HKDF
+        info = path
         if ext is not None:
-            d.update(nonpath)
-            d.update(ext)
-        fn = d.hexdigest()
+            info += nonpath + ext
+        data = HKDF_SHA256_expand(self.prk, info, 2*32)
 
-        # Generate per-file key
-        d = HMAC.new(self.key, msg=nonpath, digestmod=SHA256)
-        d.update(path)
-        if ext is not None:
-            d.update(nonpath)
-            d.update(ext)
-        key = d.digest()
+        # Generate key
+        key = data[:32]
+
+        # Generate filename
+        fn = HMAC.new(data[32:], msg=info, digestmod=SHA512).hexdigest()
 
         return os.path.join(self.path, fn), key
 
