@@ -34,11 +34,15 @@ class BlockCachedFile(object):
     def save_state(self, f):
         f.truncate(0)
         f.seek(0)
+        f.write(b"BLKS")
         f.write(struct.pack('<QQQQ', self.actual_size, self.block_size, self.cache_size, self.first_uncached_block))
         f.write(self.cache_map.to_bytes())
 
     @classmethod
     def restore_state(cls, f, state_file):
+        hdr = state_file.read(4)
+        if hdr != b"BLKS":
+            raise ValueError("invalid block cache state file")
         s = state_file.read(4*8)
         actual_size, block_size, cache_size, first_uncached_block = \
             struct.unpack('<QQQQ', s)

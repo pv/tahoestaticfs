@@ -56,28 +56,46 @@ class CacheDB(object):
         with CachedFile(self, upath, self.io) as f:
             return f.read(self.io, offset, size)
 
-    def get_filename(self, upath):
-        fn = HMAC.new(self.key, msg=upath.encode('utf-8'), digestmod=SHA512).hexdigest()
+    def get_filename(self, upath, ext=None):
+        d = HMAC.new(self.key, msg=upath.encode('utf-8'), digestmod=SHA512)
+        if ext is not None:
+            d.update(b"//\x00")
+            d.update(ext)
+        fn = d.hexdigest()
         return os.path.join(self.path, fn)
 
 
 class CachedFile(object):
     def __init__(self, cachedb, upath, io):
         filename = cachedb.get_filename(upath)
+        filename_state = cachedb.get_filename(upath, b'state')
+        filename_data = cachedb.get_filename(upath, b'data')
+
+        # Use different keys for different files, for safer fallback
+        # in the extremely unlikely event of SHA512 hash collisions
+        key_state = cachedb.key[::-1]
+        key_data = cachedb.key[::2] + cachedb.key[1::2]
+
         self.dirty = False
         self.f = None
         self.f_state = None
+        self.f_data = None
 
         try:
             self.f = CryptFile(filename, key=cachedb.key, mode='rb')
-            self.f_state = CryptFile(filename + '.sta', key=cachedb.key, mode='r+b')
+            self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
             self.info = json.load(self.f)
+
+            self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
+            self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
         except (IOError, ValueError):
             self.dirty = True
             if self.f is not None:
                 self.f.close()
             if self.f_state is not None:
                 self.f_state.close()
+            if self.f_data is not None:
+                self.f_data.close()
 
         if self.dirty:
             self.f = CryptFile(filename, key=cachedb.key, mode='w+b')
@@ -88,17 +106,14 @@ class CachedFile(object):
                 raise IOError(errno.EFAULT, "failed to retrieve information")
 
             # Create a data file filled with random data
-            self.f_data = CryptFile(filename + '.dat', key=cachedb.key, mode='w+b')
+            self.f_data = CryptFile(filename_data, key=key_data, mode='w+b')
             self.f_data.write(RandomString(self.info[1][u'size']))
 
             # Block cache on top of data file
             self.block_cache = BlockCachedFile(self.f_data, self.info[1][u'size'])
 
             # Block data state file
-            self.f_state = CryptFile(filename + '.sta', key=cachedb.key, mode='w+b')
-        else:
-            self.f_data = CryptFile(filename + '.dat', key=cachedb.key, mode='r+b')
-            self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
+            self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
 
     def close(self):
         if self.dirty:
