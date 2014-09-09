@@ -28,13 +28,11 @@ class CacheDB(object):
         self.path = path
         self.io = TahoeConnection(node_url, rootcap)
 
-        # Cache key is derived from hashed rootcap and salt via
-        # PBKDF2, with a fixed number of iterations. The salt is
-        # authenticated with HMAC using the derived key (to prevent
-        # attacker e.g. setting salt to zero).
-        d = SHA256.new()
-        d.update(rootcap.encode('utf-8'))
-        rootcap_hash = d.digest()
+        # Cache master key is derived from hashed rootcap and salt via
+        # PBKDF2, with a fixed number of iterations.
+        #
+        # The master key, combined with a second different salt, are
+        # used to generate per-file keys via HKDF-SHA256
 
         # Get salt
         salt_fn = os.path.join(self.path, 'salt')
@@ -53,7 +51,7 @@ class CacheDB(object):
                 f.write(salt_hkdf)
 
         # Derive key
-        d = pbkdf2.PBKDF2(passphrase=rootcap_hash,
+        d = pbkdf2.PBKDF2(passphrase=rootcap.encode('ascii'),
                           salt=salt,
                           iterations=100000,
                           digestmodule=SHA256)
