@@ -39,7 +39,7 @@ def HKDF_SHA256_expand(prk, info, length):
     for j in range(n):
         t = HMAC.new(prk, msg=t + info + chr(j), digestmod=SHA256).digest()
         data.append(t)
-    return b"".join(t)[:length]
+    return b"".join(data)[:length]
 
 
 class CryptFile(object):
