@@ -98,14 +98,13 @@ class CacheDB(object):
         info = path
         if ext is not None:
             info += nonpath + ext
-        data = HKDF_SHA256_expand(self.prk, info, 2*32)
+        data = HKDF_SHA256_expand(self.prk, info, 3*32)
 
         # Generate key
         key = data[:32]
 
         # Generate filename
         fn = HMAC.new(data[32:], msg=info, digestmod=SHA512).hexdigest()
-
         return os.path.join(self.path, fn), key
 
 
