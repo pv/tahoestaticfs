@@ -11,20 +11,50 @@ import errno
 
 from Crypto.Hash import HMAC, SHA256, SHA512
 from Crypto import Random
+import pbkdf2
 
-from tahoefuse.tahoeio import HTTPError
+from tahoefuse.tahoeio import HTTPError, TahoeConnection
 from tahoefuse.crypto import CryptFile
 from tahoefuse.blockcache import BlockCachedFile
 
 
 class CacheDB(object):
-    def __init__(self, path, key, io):
+    def __init__(self, path, rootcap, node_url):
         if not os.path.isdir(path):
             raise IOError("Cache directory is not an existing directory")
 
+        assert isinstance(rootcap, unicode)
+
         self.path = path
-        self.key = key
-        self.io = io
+        self.io = TahoeConnection(node_url, rootcap)
+
+        # Cache key is derived from hashed rootcap and salt via
+        # PBKDF2, with a fixed number of iterations. The salt is
+        # authenticated with HMAC using the derived key (to prevent
+        # attacker e.g. setting salt to zero).
+        d = SHA256.new()
+        d.update(rootcap.encode('utf-8'))
+        rootcap_hash = d.digest()
+
+        # Get salt
+        salt_fn = os.path.join(self.path, 'salt')
+        try:
+            with open(salt_fn, 'rb') as f:
+                salt = f.read(32)
+                if len(salt) != 32:
+                    raise ValueError()
+        except (IOError, ValueError):
+            # Start with new salt
+            salt = Random.new().read(32)
+            with open(salt_fn, 'wb') as f:
+                f.write(salt)
+
+        # Derive key
+        d = pbkdf2.PBKDF2(passphrase=rootcap_hash,
+                          salt=salt,
+                          iterations=100000,
+                          digestmodule=SHA256)
+        self.key = d.read(32)
 
     def get_upath_parent(self, path):
         return self.get_upath(os.path.dirname(os.path.normpath(path)))

@@ -7,7 +7,6 @@ import traceback
 import fuse
 
 from tahoefuse.cachedb import CacheDB
-from tahoefuse.tahoeio import TahoeConnection
 
 
 class TahoeFuseFS(fuse.Fuse):
@@ -35,8 +34,7 @@ class TahoeFuseFS(fuse.Fuse):
         rootcap = self.rootcap.decode('ascii')
         del self.rootcap
 
-        io = TahoeConnection(node_url, rootcap)
-        self.cache = CacheDB(options.cache, "a"*32, io)
+        self.cache = CacheDB(options.cache, rootcap, node_url)
 
         fuse.Fuse.main(self, args)
 
