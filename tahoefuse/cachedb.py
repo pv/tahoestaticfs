@@ -9,7 +9,7 @@ import json
 import struct
 import errno
 
-from Crypto.Hash import HMAC, SHA512
+from Crypto.Hash import HMAC, SHA256, SHA512
 from Crypto import Random
 
 from tahoefuse.tahoeio import HTTPError
@@ -56,25 +56,35 @@ class CacheDB(object):
         with CachedFile(self, upath, self.io) as f:
             return f.read(self.io, offset, size)
 
-    def get_filename(self, upath, ext=None):
-        d = HMAC.new(self.key, msg=upath.encode('utf-8'), digestmod=SHA512)
+    def get_filename_and_key(self, upath, ext=None):
+        path = upath.encode('utf-8')
+        nonpath = b"//\x00" # cannot occur in path, which is normalized
+
+        # Generate filename
+        d = HMAC.new(self.key, msg=path, digestmod=SHA512)
         if ext is not None:
-            d.update(b"//\x00")
+            d.update(nonpath)
             d.update(ext)
         fn = d.hexdigest()
-        return os.path.join(self.path, fn)
+
+        # Generate per-file key
+        d = HMAC.new(self.key, msg=nonpath, digestmod=SHA256)
+        d.update(path)
+        if ext is not None:
+            d.update(nonpath)
+            d.update(ext)
+        key = d.digest()
+
+        return os.path.join(self.path, fn), key
 
 
 class CachedFile(object):
     def __init__(self, cachedb, upath, io):
-        filename = cachedb.get_filename(upath)
-        filename_state = cachedb.get_filename(upath, b'state')
-        filename_data = cachedb.get_filename(upath, b'data')
-
-        # Use different keys for different files, for safer fallback
+        # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions
-        key_state = cachedb.key[::-1]
-        key_data = cachedb.key[::2] + cachedb.key[1::2]
+        filename, key = cachedb.get_filename_and_key(upath)
+        filename_state, key_state = cachedb.get_filename_and_key(upath, b'state')
+        filename_data, key_data = cachedb.get_filename_and_key(upath, b'data')
 
         self.dirty = False
         self.f = None
@@ -82,7 +92,7 @@ class CachedFile(object):
         self.f_data = None
 
         try:
-            self.f = CryptFile(filename, key=cachedb.key, mode='rb')
+            self.f = CryptFile(filename, key=key, mode='rb')
             self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
             self.info = json.load(self.f)
 
@@ -98,7 +108,7 @@ class CachedFile(object):
                 self.f_data.close()
 
         if self.dirty:
-            self.f = CryptFile(filename, key=cachedb.key, mode='w+b')
+            self.f = CryptFile(filename, key=key, mode='w+b')
             try:
                 self.info = io.get_info(upath)
             except (HTTPError, ValueError):
@@ -198,9 +208,9 @@ class CachedDir(object):
         self.dirty = False
         self.f = None
 
-        filename = cachedb.get_filename(upath)
+        filename, key = cachedb.get_filename_and_key(upath)
         try:
-            self.f = CryptFile(filename, key=cachedb.key, mode='rb')
+            self.f = CryptFile(filename, key=key, mode='rb')
             self.info = json.load(self.f)
             return
         except (IOError, ValueError):
@@ -208,7 +218,7 @@ class CachedDir(object):
                 self.f.close()
 
         self.dirty = True
-        self.f = CryptFile(filename, key=cachedb.key, mode='w+b')
+        self.f = CryptFile(filename, key=key, mode='w+b')
         try:
             self.info = io.get_info(upath)
         except (HTTPError, ValueError):
