@@ -128,13 +128,13 @@ class CachedFile(object):
     def close(self):
         if self.dirty:
             json.dump(self.info, self.f)
-            self.f.close()
 
         self.f_state.seek(0)
         self.f_state.truncate(0)
         self.block_cache.save_state(self.f_state)
         self.f_state.close()
         self.block_cache.close()
+        self.f.close()
 
     def __enter__(self):
         return self
