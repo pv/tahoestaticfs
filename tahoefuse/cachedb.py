@@ -28,6 +28,9 @@ class CacheDB(object):
         self.path = path
         self.io = TahoeConnection(node_url, rootcap)
 
+        # List of alive files
+        self.alive_files = []
+
         # Cache master key is derived from hashed rootcap and salt via
         # PBKDF2, with a fixed number of iterations.
         #
@@ -60,6 +63,65 @@ class CacheDB(object):
         # HKDF private key material for per-file keys
         self.prk = HKDF_SHA256_extract(salt=salt_hkdf, key=key)
 
+        # Load alive files
+        self._load_alive_files()
+
+        # Remove dead files
+        self._cleanup()
+
+    def _load_alive_files(self):
+        """
+        Walk through the cached directory tree, and record in
+        self.alive_files which cache files are reachable from the
+        root.
+        """
+        self.alive_files = []
+
+        stack = []
+
+        # Start from root
+        fn, key = self.get_filename_and_key(u"")
+        if os.path.isfile(fn):
+            stack.append((u"", fn, key))
+
+        # Walk the tree
+        while stack:
+            upath, fn, key = stack.pop()
+
+            if not os.path.isfile(fn):
+                continue
+
+            try:
+                with CryptFile(fn, key=key, mode='rb') as f:
+                    data = json.load(f)
+                    if data[0] != u'dirnode':
+                        raise ValueError()
+                    children = data[1].get(u'children', {}).items()
+            except (IOError, ValueError):
+                continue
+
+            self.alive_files.append((os.path.basename(fn), upath))
+
+            for c_fn, c_info in children:
+                c_upath = os.path.join(upath, c_fn)
+                if c_info[0] == u'dirnode':
+                    c_fn, c_key = self.get_filename_and_key(c_upath)
+                    if os.path.isfile(c_fn):
+                        stack.append((c_upath, c_fn, c_key))
+                elif c_info[0] == u'filenode':
+                    for ext in (None, b'state', b'data'):
+                        c_fn, c_key = self.get_filename_and_key(c_upath, ext=ext)
+                        self.alive_files.append((os.path.basename(c_fn), c_upath))
+
+    def _cleanup(self):
+        alive_file_set = set(x[0] for x in self.alive_files)
+        for basename in os.listdir(self.path):
+            if basename == 'salt':
+                continue
+            if basename not in alive_file_set:
+                fn = os.path.join(self.path, basename)
+                os.unlink(fn)
+
     def get_upath_parent(self, path):
         return self.get_upath(os.path.dirname(os.path.normpath(path)))
 
@@ -69,6 +131,25 @@ class CacheDB(object):
             return path.decode(sys.getfilesystemencoding()).lstrip(u'/')
         except UnicodeError:
             raise IOError(errno.ENOENT, "file does not exist")
+
+    def get_filename_and_key(self, upath, ext=None):
+        path = upath.encode('utf-8')
+        nonpath = b"//\x00" # cannot occur in path, which is normalized
+
+        # Generate per-file key material via HKDF
+        info = path
+        if ext is not None:
+            info += nonpath + ext
+        data = HKDF_SHA256_expand(self.prk, info, 3*32)
+
+        # Generate key
+        key = data[:32]
+
+        # Generate filename
+        fn = HMAC.new(data[32:], msg=info, digestmod=SHA512).hexdigest()
+        return os.path.join(self.path, fn), key
+
+    # -- FUSE operations:
 
     def listdir(self, path):
         upath = self.get_upath(path)
@@ -89,23 +170,6 @@ class CacheDB(object):
         upath = self.get_upath(path)
         with CachedFile(self, upath, self.io) as f:
             return f.read(self.io, offset, size)
-
-    def get_filename_and_key(self, upath, ext=None):
-        path = upath.encode('utf-8')
-        nonpath = b"//\x00" # cannot occur in path, which is normalized
-
-        # Generate per-file key material via HKDF
-        info = path
-        if ext is not None:
-            info += nonpath + ext
-        data = HKDF_SHA256_expand(self.prk, info, 3*32)
-
-        # Generate key
-        key = data[:32]
-
-        # Generate filename
-        fn = HMAC.new(data[32:], msg=info, digestmod=SHA512).hexdigest()
-        return os.path.join(self.path, fn), key
 
 
 class CachedFile(object):
