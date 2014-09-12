@@ -26,11 +26,18 @@ class CacheDB(object):
         assert isinstance(rootcap, unicode)
 
         self.path = path
-        self.io = TahoeConnection(node_url, rootcap)
+        self.prk = self._generate_prk(rootcap)
 
         # List of alive files
         self.alive_files = []
 
+        # Load alive files
+        self._load_alive_files()
+
+        # Remove dead files
+        self._cleanup()
+
+    def _generate_prk(self, rootcap):
         # Cache master key is derived from hashed rootcap and salt via
         # PBKDF2, with a fixed number of iterations.
         #
@@ -61,13 +68,7 @@ class CacheDB(object):
         key = d.read(32)
 
         # HKDF private key material for per-file keys
-        self.prk = HKDF_SHA256_extract(salt=salt_hkdf, key=key)
-
-        # Load alive files
-        self._load_alive_files()
-
-        # Remove dead files
-        self._cleanup()
+        return HKDF_SHA256_extract(salt=salt_hkdf, key=key)
 
     def _load_alive_files(self):
         """
@@ -149,30 +150,11 @@ class CacheDB(object):
         fn = HMAC.new(data[32:], msg=info, digestmod=SHA512).hexdigest()
         return os.path.join(self.path, fn), key
 
-    # -- FUSE operations:
-
-    def listdir(self, path):
-        upath = self.get_upath(path)
-        with CachedDir(self, upath, self.io) as dir:
-            return dir.listdir()
-
-    def getattr(self, path):
-        upath = self.get_upath(path)
-        if upath == u'':
-            with CachedDir(self, upath, self.io) as dir:
-                return dir.get_attr()
-        else:
-            upath_parent = self.get_upath_parent(path)
-            with CachedDir(self, upath_parent, self.io) as dir:
-                return dir.get_child_attr(os.path.basename(upath))
-
-    def read(self, path, offset, size):
-        upath = self.get_upath(path)
-        with CachedFile(self, upath, self.io) as f:
-            return f.read(self.io, offset, size)
-
 
 class CachedFile(object):
+    direct_io = False
+    keep_cache = False
+
     def __init__(self, cachedb, upath, io):
         # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions

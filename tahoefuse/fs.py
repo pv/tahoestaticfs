@@ -6,7 +6,8 @@ import traceback
 
 import fuse
 
-from tahoefuse.cachedb import CacheDB
+from tahoefuse.cachedb import CacheDB, CachedFile, CachedDir
+from tahoefuse.tahoeio import TahoeConnection
 
 
 class TahoeFuseFS(fuse.Fuse):
@@ -35,15 +36,61 @@ class TahoeFuseFS(fuse.Fuse):
         del self.rootcap
 
         self.cache = CacheDB(options.cache, rootcap, node_url)
+        self.io = TahoeConnection(node_url, rootcap)
 
         fuse.Fuse.main(self, args)
 
+    # -- Directory handle ops
+
+    def opendir(self, path):
+        upath = self.cache.get_upath(path)
+        return CachedDir(self.cache, upath, self.io)
+
+    def releasedir(self, path, f):
+        f.close()
+
+    def readdir(self, path, offset, f):
+        upath = self.cache.get_upath(path)
+
+        entries = [fuse.Direntry(b'.'), 
+                   fuse.Direntry(b'..')]
+        encoding = sys.getfilesystemencoding()
+
+        for c in f.listdir():
+            entries.append(fuse.Direntry(c.encode(encoding)))
+
+        return entries
+
+    # -- File ops
+
+
+    def open(self, path, flags):
+        upath = self.cache.get_upath(path)
+        if flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) != os.O_RDONLY:
+            return -errno.EACCES
+        else:
+            return CachedFile(self.cache, upath, self.io)
+
+    def release(self, path, flags, f):
+        f.close()
+        return 0
+
+    def read(self, path, size, offset, f):
+        upath = self.cache.get_upath(path)
+        return f.read(self.io, offset, size)
+
+    # -- Handleless ops
+
     def getattr(self, path):
-        try:
-            info = self.cache.getattr(path)
-        except:
-            traceback.print_exc()
-            raise
+        upath = self.cache.get_upath(path)
+
+        if upath == u'':
+            with CachedDir(self.cache, upath, self.io) as dir:
+                info = dir.get_attr()
+        else:
+            upath_parent = self.cache.get_upath_parent(path)
+            with CachedDir(self.cache, upath_parent, self.io) as dir:
+                info = dir.get_child_attr(os.path.basename(upath))
 
         if info['type'] == 'dir':
             st = fuse.Stat()
@@ -60,31 +107,3 @@ class TahoeFuseFS(fuse.Fuse):
             return -errno.EBADF
 
         return st
-
-    def readdir(self, path, offset):
-        entries = [fuse.Direntry(b'.'), 
-                   fuse.Direntry(b'..')]
-
-        encoding = sys.getfilesystemencoding()
-        for c in self.cache.listdir(path):
-            entries.append(fuse.Direntry(c.encode(encoding)))
-        return entries
-
-    def read(self, path, size, offset):
-        try:
-            return self.cache.read(path, offset, size)
-        except:
-            traceback.print_exc()
-            raise
-
-    def open(self, path, flags):
-        try:
-            upath = path.decode(sys.getfilesystemencoding())
-        except UnicodeError, e:
-            # all tahoe files have valid unicode names
-            return -errno.ENOENT
-
-        if flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) != os.O_RDONLY:
-            return -errno.EACCES
-        else:
-            return 0
