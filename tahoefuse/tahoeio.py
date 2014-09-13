@@ -38,13 +38,11 @@ class TahoeConnection(object):
                 self.semaphore.release()
                 raise
             self.connections.append(response)
-            print "GET", response
             return response
 
     def _release_response(self, response):
         with self.lock:
             if response in self.connections:
-                print "RELEASE", response
                 self.semaphore.release()
                 self.connections.remove(response)
 
