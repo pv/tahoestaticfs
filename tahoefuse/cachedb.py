@@ -8,6 +8,7 @@ import time
 import json
 import struct
 import errno
+import threading
 
 from Crypto.Hash import HMAC, SHA256, SHA512
 from Crypto import Random
@@ -162,6 +163,7 @@ class CachedFile(object):
         filename_state, key_state = cachedb.get_filename_and_key(upath, b'state')
         filename_data, key_data = cachedb.get_filename_and_key(upath, b'data')
 
+        self.lock = threading.Lock()
         self.dirty = False
         self.f = None
         self.f_state = None
@@ -207,12 +209,13 @@ class CachedFile(object):
             self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
 
     def close(self):
-        self.f_state.seek(0)
-        self.f_state.truncate(0)
-        self.block_cache.save_state(self.f_state)
-        self.f_state.close()
-        self.block_cache.close()
-        self.f.close()
+        with self.lock:
+            self.f_state.seek(0)
+            self.f_state.truncate(0)
+            self.block_cache.save_state(self.f_state)
+            self.f_state.close()
+            self.block_cache.close()
+            self.f.close()
 
     def __enter__(self):
         return self
@@ -278,7 +281,8 @@ class CachedFile(object):
                 stream_f.close()
 
     def read(self, io, offset, length):
-        return self._do_rw(io, offset, length, write=False)
+        with self.lock:
+            return self._do_rw(io, offset, length, write=False)
 
 
 class CachedDir(object):
