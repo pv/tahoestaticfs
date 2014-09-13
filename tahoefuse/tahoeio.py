@@ -1,17 +1,52 @@
 from urllib2 import Request, urlopen, quote, HTTPError
 import json
+import threading
 
 
-class TahoeError(IOError):
-    pass
+class TahoeResponse(object):
+    def __init__(self, connection, req):
+        self.connection = connection
+        self.response = urlopen(req)
+
+    def read(self, size=None):
+        return self.response.read(size)
+
+    def close(self):
+        self.response.close()
+        self.connection._release_response(self)
 
 
 class TahoeConnection(object):
-    def __init__(self, base_url, rootcap):
+    def __init__(self, base_url, rootcap, max_connections=10):
         assert isinstance(base_url, unicode)
         assert isinstance(rootcap, unicode)
+
         self.base_url = (base_url.rstrip('/') + '/uri').encode('utf-8')
         self.rootcap = rootcap.encode('utf-8')
+
+        self.connections = []
+        self.lock = threading.Lock()
+
+        self.semaphore = threading.Semaphore(max_connections)
+
+    def _get_response(self, req):
+        self.semaphore.acquire()
+        with self.lock:
+            try:
+                response = TahoeResponse(self, req)
+            except:
+                self.semaphore.release()
+                raise
+            self.connections.append(response)
+            print "GET", response
+            return response
+
+    def _release_response(self, response):
+        with self.lock:
+            if response in self.connections:
+                print "RELEASE", response
+                self.semaphore.release()
+                self.connections.remove(response)
 
     def _url(self, path, params={}, iscap=False):
         assert isinstance(path, unicode), path
@@ -61,25 +96,27 @@ class TahoeConnection(object):
 
     def _get(self, path, params={}, offset=None, length=None, iscap=False):
         req = self._get_request("GET", path, params=params, offset=offset, length=length, iscap=iscap)
-        return urlopen(req)
+        return self._get_response(req)
 
     def _post(self, path, data=None, params={}, iscap=False):
         req = self._get_request("POST", path, data=data, params=params, iscap=iscap)
-        return urlopen(req)
+        return self._get_response(req)
 
     def _put(self, path, data=None, params={}, iscap=False):
         req = self._get_request("PUT", path, params=params, iscap=iscap)
-        return urlopen(req)
+        return self._get_response(req)
 
     def _delete(self, path, params={}, iscap=False):
         req = self._get_request("DELETE", path, params=params, iscap=iscap)
-        return urlopen(req)
+        return self._get_response(req)
 
     def get_info(self, path, iscap=False):
         f = self._get(path, {u't': u'json'}, iscap=iscap)
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        finally:
+            f.close()
         return data
 
     def get_content(self, path, offset=None, length=None, iscap=False):
-        f = self._get(path, offset=offset, length=length, iscap=iscap)
-        return f
+        return self._get(path, offset=offset, length=length, iscap=iscap)
