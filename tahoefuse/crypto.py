@@ -3,7 +3,9 @@ Cache metadata and data of a directory tree.
 """
 
 import os
+import sys
 import struct
+import errno
 import fcntl
 
 from Crypto.Cipher import AES
@@ -53,20 +55,35 @@ class CryptFile(object):
 
     def __init__(self, path, key, mode='r+b', block_size=BLOCK_SIZE):
         self.key = None
+        self.path = path
 
         if len(key) != 32:
             raise ValueError("Key must be 32 bytes")
 
-        if mode in ('rb', 'r+b', 'w+b'):
-            self.fp = open(path, mode)
-        else:
-            raise IOError("Unsupported mode %r" % (mode,))
-
-        # BSD locking on the file; only one fd can write at a time
         if mode == 'rb':
-            fcntl.flock(self.fp, fcntl.LOCK_SH)
+            fd = os.open(path, os.O_RDONLY)
+        elif mode == 'r+b':
+            fd = os.open(path, os.O_RDWR)
+        elif mode == 'w+b':
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 00600)
         else:
-            fcntl.flock(self.fp, fcntl.LOCK_EX)
+            raise IOError(errno.EACCES, "Unsupported mode %r" % (mode,))
+
+        try:
+            # BSD locking on the file; only one fd can write at a time
+            if mode == 'rb':
+                fcntl.flock(fd, fcntl.LOCK_SH)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+
+            if mode == 'w+b':
+                # Truncate after locking
+                os.ftruncate(fd, 0)
+
+            self.fp = os.fdopen(fd, mode)
+        except:
+            os.close(fd)
+            raise
 
         self.mode = mode
         self.key = key
@@ -151,9 +168,9 @@ class CryptFile(object):
         elif whence == 2:
             offset += self.data_size
         else:
-            raise IOError("Invalid whence")
+            raise IOError(errno.EINVAL, "Invalid whence")
         if offset < 0:
-            raise IOError("Invalid offset")
+            raise IOError(errno.EINVAL, "Invalid offset")
         self.offset = offset
 
     def tell(self):
@@ -193,7 +210,7 @@ class CryptFile(object):
         k = 0
 
         if self.mode == 'rb':
-            raise IOError("Write to a read-only file")
+            raise IOError(errno.EACCES, "Write to a read-only file")
 
         # Write first block, if partial
         if start_off != 0 or end_block == start_block:
