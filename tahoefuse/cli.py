@@ -24,7 +24,7 @@ def main():
     else:
         rootcap = raw_input('Root dircap: ')
 
-    fs = TahoeFuseFS(rootcap=rootcap, version=__version__, usage=usage, dash_s_do="setsingle")
+    fs = TahoeFuseFS(rootcap=rootcap, version=__version__, usage=usage)
     fs.parse(errex=1)
     fs.main()
 

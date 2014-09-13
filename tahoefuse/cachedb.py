@@ -21,7 +21,7 @@ from tahoefuse.blockcache import BlockCachedFile
 class CacheDB(object):
     def __init__(self, path, rootcap, node_url):
         if not os.path.isdir(path):
-            raise IOError("Cache directory is not an existing directory")
+            raise IOError(errno.ENOENT, "Cache directory is not an existing directory")
 
         assert isinstance(rootcap, unicode)
 
@@ -52,7 +52,7 @@ class CacheDB(object):
                 salt_hkdf = f.read(32)
                 if len(salt) != 32 or len(salt_hkdf) != 32:
                     raise ValueError()
-        except (IOError, ValueError):
+        except (IOError, OSError, ValueError):
             # Start with new salt
             salt = Random.new().read(32)
             salt_hkdf = Random.new().read(32)
@@ -98,7 +98,7 @@ class CacheDB(object):
                     if data[0] != u'dirnode':
                         raise ValueError()
                     children = data[1].get(u'children', {}).items()
-            except (IOError, ValueError):
+            except (IOError, OSError, ValueError):
                 continue
 
             self.alive_files.append((os.path.basename(fn), upath))
@@ -169,15 +169,16 @@ class CachedFile(object):
 
         try:
             self.f = CryptFile(filename, key=key, mode='rb')
-            self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
             self.info = json.load(self.f)
 
+            self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
             self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
             self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
-        except (IOError, ValueError):
+        except (IOError, OSError, ValueError):
             self.dirty = True
             if self.f is not None:
                 self.f.close()
+                self.f = None
             if self.f_state is not None:
                 self.f_state.close()
             if self.f_data is not None:
@@ -185,11 +186,15 @@ class CachedFile(object):
 
         if self.dirty:
             self.f = CryptFile(filename, key=key, mode='w+b')
+
             try:
                 self.info = io.get_info(upath)
             except (HTTPError, ValueError):
+                os.unlink(filename)
                 self.f.close()
                 raise IOError(errno.EFAULT, "failed to retrieve information")
+
+            json.dump(self.info, self.f)
 
             # Create a data file filled with random data
             self.f_data = CryptFile(filename_data, key=key_data, mode='w+b')
@@ -202,9 +207,6 @@ class CachedFile(object):
             self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
 
     def close(self):
-        if self.dirty:
-            json.dump(self.info, self.f)
-
         self.f_state.seek(0)
         self.f_state.truncate(0)
         self.block_cache.save_state(self.f_state)
@@ -281,30 +283,26 @@ class CachedFile(object):
 
 class CachedDir(object):
     def __init__(self, cachedb, upath, io):
-        self.dirty = False
-        self.f = None
-
         filename, key = cachedb.get_filename_and_key(upath)
         try:
-            self.f = CryptFile(filename, key=key, mode='rb')
-            self.info = json.load(self.f)
+            with CryptFile(filename, key=key, mode='rb') as f:
+                self.info = json.load(f)
             return
-        except (IOError, ValueError):
-            if self.f is not None:
-                self.f.close()
+        except (IOError, OSError, ValueError):
+            pass
 
-        self.dirty = True
-        self.f = CryptFile(filename, key=key, mode='w+b')
+        f = CryptFile(filename, key=key, mode='w+b')
         try:
             self.info = io.get_info(upath)
+            json.dump(self.info, f)
         except (HTTPError, ValueError):
-            self.f.close()
+            os.unlink(filename)
             raise IOError(errno.EFAULT, "failed to retrieve information")
+        finally:
+            f.close()
 
     def close(self):
-        if self.dirty:
-            json.dump(self.info, self.f)
-        self.f.close()
+        pass
 
     def __enter__(self):
         return self

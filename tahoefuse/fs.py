@@ -10,10 +10,33 @@ from tahoefuse.cachedb import CacheDB, CachedFile, CachedDir
 from tahoefuse.tahoeio import TahoeConnection
 
 
+def ioerrwrap(func):
+    def wrapper(*a, **kw):
+        try:
+            return func(*a, **kw)
+        except (IOError, OSError), e:
+            print >> sys.stderr, "-"*80
+            traceback.print_exc()
+            print >> sys.stderr, "-"*80
+            sys.stderr.flush()
+            sys.stdout.flush()
+            if hasattr(e, 'errno') and isinstance(e.errno, int):
+                return -e.errno
+            return -errno.EACCES
+        except:
+            print >> sys.stderr, "-"*80
+            traceback.print_exc()
+            print >> sys.stderr, "-"*80
+            raise
+            
+    wrapper.__name__ = func.__name__
+    wrapper.__doc__ = func.__doc__
+    return wrapper
+
+
 class TahoeFuseFS(fuse.Fuse):
     def __init__(self, rootcap, *args, **kwargs):
         super(TahoeFuseFS, self).__init__(*args, **kwargs)
-        opts = self.parse(['-s'])
         self.parser.add_option('-c', '--cache', dest='cache', help="Cache directory")
         self.parser.add_option('-u', '--node-url', dest='node_url', help="Tahoe gateway node URL")
         self.rootcap = rootcap
@@ -42,28 +65,23 @@ class TahoeFuseFS(fuse.Fuse):
 
     # -- Directory handle ops
 
-    def opendir(self, path):
-        upath = self.cache.get_upath(path)
-        return CachedDir(self.cache, upath, self.io)
-
-    def releasedir(self, path, f):
-        f.close()
-
-    def readdir(self, path, offset, f):
+    @ioerrwrap
+    def readdir(self, path, offset):
         upath = self.cache.get_upath(path)
 
         entries = [fuse.Direntry(b'.'), 
                    fuse.Direntry(b'..')]
         encoding = sys.getfilesystemencoding()
 
-        for c in f.listdir():
-            entries.append(fuse.Direntry(c.encode(encoding)))
+        with CachedDir(self.cache, upath, self.io) as f:
+            for c in f.listdir():
+                entries.append(fuse.Direntry(c.encode(encoding)))
 
         return entries
 
     # -- File ops
 
-
+    @ioerrwrap
     def open(self, path, flags):
         upath = self.cache.get_upath(path)
         if flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) != os.O_RDONLY:
@@ -71,16 +89,19 @@ class TahoeFuseFS(fuse.Fuse):
         else:
             return CachedFile(self.cache, upath, self.io)
 
+    @ioerrwrap
     def release(self, path, flags, f):
         f.close()
         return 0
 
+    @ioerrwrap
     def read(self, path, size, offset, f):
         upath = self.cache.get_upath(path)
         return f.read(self.io, offset, size)
 
     # -- Handleless ops
 
+    @ioerrwrap
     def getattr(self, path):
         upath = self.cache.get_upath(path)
 
