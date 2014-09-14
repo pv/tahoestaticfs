@@ -3,6 +3,7 @@ import sys
 import errno
 import stat
 import traceback
+import threading
 
 import fuse
 
@@ -10,25 +11,35 @@ from tahoefuse.cachedb import CacheDB, CachedFile, CachedDir
 from tahoefuse.tahoeio import TahoeConnection
 
 
+print_lock = threading.Lock()
+
+
 def ioerrwrap(func):
     def wrapper(*a, **kw):
         try:
             return func(*a, **kw)
         except (IOError, OSError), e:
-            print >> sys.stderr, "-"*80
-            traceback.print_exc()
-            print >> sys.stderr, "-"*80
-            sys.stderr.flush()
-            sys.stdout.flush()
+            # Unexpected error condition: print traceback
+            with print_lock:
+                print >> sys.stderr, "-"*80
+                traceback.print_exc()
+                print >> sys.stderr, "-"*80
+                sys.stderr.flush()
+                sys.stdout.flush()
             if hasattr(e, 'errno') and isinstance(e.errno, int):
+                # Standard operation
                 return -e.errno
             return -errno.EACCES
         except:
-            print >> sys.stderr, "-"*80
-            traceback.print_exc()
-            print >> sys.stderr, "-"*80
+            # Unexpected error condition: print traceback
+            with print_lock:
+                print >> sys.stderr, "-"*80
+                traceback.print_exc()
+                print >> sys.stderr, "-"*80
+                sys.stderr.flush()
+                sys.stdout.flush()
             raise
-            
+
     wrapper.__name__ = func.__name__
     wrapper.__doc__ = func.__doc__
     return wrapper
@@ -84,20 +95,32 @@ class TahoeFuseFS(fuse.Fuse):
     @ioerrwrap
     def open(self, path, flags):
         upath = self.cache.get_upath(path)
-        if flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) != os.O_RDONLY:
-            return -errno.EACCES
-        else:
-            return CachedFile(self.cache, upath, self.io)
+        return CachedFile(self.cache, upath, self.io, flags)
 
     @ioerrwrap
     def release(self, path, flags, f):
-        f.close()
+        upath = self.cache.get_upath(path)
+        try:
+            f.upload(self.io, upath)
+        finally:
+            f.close()
         return 0
 
     @ioerrwrap
     def read(self, path, size, offset, f):
         upath = self.cache.get_upath(path)
         return f.read(self.io, offset, size)
+
+    @ioerrwrap
+    def write(self, path, data, offset, f):
+        upath = self.cache.get_upath(path)
+        f.write(self.io, offset, data)
+        return len(data)
+
+    @ioerrwrap
+    def ftruncate(self, path, size, f):
+        f.truncate(size)
+        return 0
 
     # -- Handleless ops
 
@@ -119,7 +142,7 @@ class TahoeFuseFS(fuse.Fuse):
             st.st_nlink = 1
         elif info['type'] == u'file':
             st = fuse.Stat()
-            st.st_mode = stat.S_IFREG | stat.S_IRUSR
+            st.st_mode = stat.S_IFREG | stat.S_IRUSR | stat.S_IWUSR
             st.st_nlink = 1
             st.st_size = info['size']
             st.st_mtime = info['mtime']

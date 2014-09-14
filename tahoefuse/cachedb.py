@@ -156,47 +156,82 @@ class CachedFile(object):
     direct_io = False
     keep_cache = False
 
-    def __init__(self, cachedb, upath, io):
+    def __init__(self, cachedb, upath, io, flags):
+        self.closed = False
+        self.flags = flags
+
+        self.writeable = (self.flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_WRONLY)
+        self.readable = (self.flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_RDONLY)
+
+        if self.flags & os.O_ASYNC:
+            raise IOError(errno.EINVAL, "O_ASYNC flag is not supported")
+        if self.flags & os.O_DIRECT:
+            raise IOError(errno.EINVAL, "O_DIRECT flag is not supported")
+        if self.flags & os.O_DIRECTORY:
+            raise IOError(errno.EINVAL, "O_DIRECTORY flag is not supported")
+        if self.flags & os.O_NOFOLLOW:
+            raise IOError(errno.EINVAL, "O_NOFOLLOW flag is not supported")
+        if self.flags & os.O_SYNC:
+            raise IOError(errno.EINVAL, "O_SYNC flag is not supported")
+        if (self.flags & os.O_CREAT) and not self.writeable:
+            raise IOError(errno.EINVAL, "O_CREAT without writeable file")
+        if (self.flags & os.O_TRUNC) and not self.writeable:
+            raise IOError(errno.EINVAL, "O_TRUNC without writeable file")
+        if (self.flags & os.O_EXCL) and not self.writeable:
+            raise IOError(errno.EINVAL, "O_EXCL without writeable file")
+
         # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions
         filename, key = cachedb.get_filename_and_key(upath)
         filename_state, key_state = cachedb.get_filename_and_key(upath, b'state')
         filename_data, key_data = cachedb.get_filename_and_key(upath, b'data')
 
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.dirty = False
         self.f = None
         self.f_state = None
         self.f_data = None
 
-        try:
-            self.f = CryptFile(filename, key=key, mode='rb')
-            self.info = json.load(self.f)
+        open_ok = True
 
-            self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
-            self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
-            self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
-        except (IOError, OSError, ValueError):
-            self.dirty = True
-            if self.f is not None:
-                self.f.close()
-                self.f = None
-            if self.f_state is not None:
-                self.f_state.close()
-            if self.f_data is not None:
-                self.f_data.close()
+        if not self.writeable:
+            # Reuse cached data only for read-only mode
+            try:
+                self.f = CryptFile(filename, key=key, mode='r+b')
+                self.info = json.load(self.f)
 
-        if self.dirty:
+                self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
+                self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
+                self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
+            except (IOError, OSError, ValueError):
+                open_ok = False
+                if self.f is not None:
+                    self.f.close()
+                    self.f = None
+                if self.f_state is not None:
+                    self.f_state.close()
+                if self.f_data is not None:
+                    self.f_data.close()
+        else:
+            open_ok = False
+
+        if open_ok and (self.flags & os.O_EXCL):
+            raise IOError(errno.EEXIST, "file already exists")
+
+        if not open_ok:
             self.f = CryptFile(filename, key=key, mode='w+b')
 
             try:
-                self.info = io.get_info(upath)
-            except (HTTPError, ValueError):
-                os.unlink(filename)
-                self.f.close()
-                raise IOError(errno.EFAULT, "failed to retrieve information")
-
-            json.dump(self.info, self.f)
+                self._load_info(upath, io)
+                if self.flags & os.O_EXCL:
+                    raise IOError(errno.EEXIST, "file already exists")
+            except IOError, err:
+                if err.errno == errno.ENOENT and (self.flags & os.O_CREAT):
+                    self.info = {}
+                else:
+                    os.unlink(filename)
+                    self.f.close()
+                    raise
 
             # Create a data file filled with random data
             self.f_data = CryptFile(filename_data, key=key_data, mode='w+b')
@@ -208,14 +243,30 @@ class CachedFile(object):
             # Block data state file
             self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
 
+        if self.flags & os.O_TRUNC:
+            self.block_cache.truncate(0)
+
+    def _load_info(self, upath, io, iscap=False):
+        try:
+            self.info = io.get_info(upath, iscap=iscap)
+        except (HTTPError, ValueError), err:
+            if isinstance(err, HTTPError) and err.code == 404:
+                raise IOError(errno.ENOENT, "no such file")
+            raise IOError(errno.EFAULT, "failed to retrieve information")
+        self.f.truncate(0)
+        self.f.seek(0)
+        json.dump(self.info, self.f)
+
     def close(self):
         with self.lock:
-            self.f_state.seek(0)
-            self.f_state.truncate(0)
-            self.block_cache.save_state(self.f_state)
-            self.f_state.close()
-            self.block_cache.close()
-            self.f.close()
+            if not self.closed:
+                self.f_state.seek(0)
+                self.f_state.truncate(0)
+                self.block_cache.save_state(self.f_state)
+                self.f_state.close()
+                self.block_cache.close()
+                self.f.close()
+            self.closed = True
 
     def __enter__(self):
         return self
@@ -224,7 +275,7 @@ class CachedFile(object):
         self.close()
         return False
 
-    def _do_rw(self, io, offset, length_or_data, write=False):
+    def _do_rw(self, io, offset, length_or_data, write=False, no_result=False):
         if write:
             data = length_or_data
             length = len(data)
@@ -244,7 +295,9 @@ class CachedFile(object):
 
                 if pos is None:
                     # cache ready
-                    if write:
+                    if no_result:
+                        return None
+                    elif write:
                         return self.block_cache.write(offset, data)
                     else:
                         return self.block_cache.read(offset, length)
@@ -274,15 +327,70 @@ class CachedFile(object):
                         read_bytes += len(block)
                         stream_offset, stream_data = self.block_cache.receive_cached_data(stream_offset, stream_data)
 
-        except HTTPError, e: 
-            raise IOError(errno.EFAULT, str(e))
+        except HTTPError, err: 
+            raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
         finally:
             if stream_f is not None:
                 stream_f.close()
 
+    def _buffer_whole_file(self, io):
+        self._do_rw(io, 0, self.block_cache.get_size(), write=False, no_result=True)
+
     def read(self, io, offset, length):
         with self.lock:
+            if not self.readable:
+                raise IOError(errno.EINVAL, "File not readable")
             return self._do_rw(io, offset, length, write=False)
+
+    def write(self, io, offset, data):
+        with self.lock:
+            if not self.writeable:
+                raise IOError(errno.EINVAL, "File not writeable")
+
+            if self.flags & os.O_APPEND:
+                offset = self.block_cache.get_size()
+
+            if len(data) > 0:
+                self.dirty = True
+                self._do_rw(io, offset, data, write=True)
+
+    def truncate(self, size):
+        with self.lock:
+            if not self.writeable:
+                raise IOError(errno.EINVAL, "File not writeable")
+            self.block_cache.truncate(size)
+
+    def upload(self, io, upath):
+        with self.lock:
+            if not self.writeable or not self.dirty:
+                # No changes
+                return
+
+            # Buffer all data
+            self._buffer_whole_file(io)
+
+            # Upload the whole file
+            class Fwrapper(object):
+                def __init__(self, block_cache):
+                    self.block_cache = block_cache
+                    self.size = block_cache.get_size()
+                    self.f = self.block_cache.get_file()
+                    self.f.seek(0)
+                def __len__(self):
+                    return self.size
+                def read(self, size):
+                    return self.f.read(size)
+
+            fw = Fwrapper(self.block_cache)
+            try:
+                filecap = io.put_file(upath, fw)
+            except HTTPError, err:
+                raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
+
+            filecap = filecap.decode('latin1').strip()
+            self._load_info(filecap, io, iscap=True)
+
+            self.close()
 
 
 class CachedDir(object):

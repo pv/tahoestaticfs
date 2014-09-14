@@ -1,6 +1,7 @@
 from urllib2 import Request, urlopen, quote, HTTPError
 import json
 import threading
+import shutil
 
 
 class TahoeResponse(object):
@@ -50,10 +51,11 @@ class TahoeConnection(object):
         assert isinstance(path, unicode), path
 
         if iscap:
-            return self.base_url + b'/' + path.encode('ascii')
-
-        path = path.encode('utf-8')
-        path = quote(path).lstrip(b'/')
+            path = self.base_url + b'/' + path.encode('ascii')
+        else:
+            path = path.encode('utf-8')
+            path = quote(path).lstrip(b'/')
+            path = self.base_url + b'/' + self.rootcap + b'/' + path
 
         if params:
             path += b'?'
@@ -69,7 +71,7 @@ class TahoeConnection(object):
                 path += b'='
                 path += v
 
-        return self.base_url + b'/' + self.rootcap + b'/' + path
+        return path
 
     def _get_request(self, method, path, offset=None, length=None, data=None, params={}, iscap=False):
         headers = {b'Accept': b'text/plain'}
@@ -101,7 +103,7 @@ class TahoeConnection(object):
         return self._get_response(req)
 
     def _put(self, path, data=None, params={}, iscap=False):
-        req = self._get_request("PUT", path, params=params, iscap=iscap)
+        req = self._get_request("PUT", path, data=data, params=params, iscap=iscap)
         return self._get_response(req)
 
     def _delete(self, path, params={}, iscap=False):
@@ -118,3 +120,10 @@ class TahoeConnection(object):
 
     def get_content(self, path, offset=None, length=None, iscap=False):
         return self._get(path, offset=offset, length=length, iscap=iscap)
+
+    def put_file(self, path, f):
+        f = self._put(path, data=f)
+        try:
+            return f.read()
+        finally:
+            f.close()
