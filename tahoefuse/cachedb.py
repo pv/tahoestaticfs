@@ -29,6 +29,13 @@ class CacheDB(object):
         self.path = path
         self.prk = self._generate_prk(rootcap)
 
+        # Cache lock
+        self.lock = threading.RLock()
+
+        # Open files
+        self.open_dirs = {}
+        self.open_files = {}
+
         # List of alive files
         self.alive_files = []
 
@@ -123,6 +130,14 @@ class CacheDB(object):
             if basename not in alive_file_set:
                 fn = os.path.join(self.path, basename)
                 os.unlink(fn)
+
+    def open_file(self, upath, io, flags):
+        with self.lock:
+            return CachedFile(self, upath, io, flags)
+
+    def open_dir(self, upath, io):
+        with self.lock:
+            return CachedDir(self, upath, io)
 
     def get_upath_parent(self, path):
         return self.get_upath(os.path.dirname(os.path.normpath(path)))

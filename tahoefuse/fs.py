@@ -7,7 +7,7 @@ import threading
 
 import fuse
 
-from tahoefuse.cachedb import CacheDB, CachedFile, CachedDir
+from tahoefuse.cachedb import CacheDB
 from tahoefuse.tahoeio import TahoeConnection
 
 
@@ -84,7 +84,7 @@ class TahoeFuseFS(fuse.Fuse):
                    fuse.Direntry(b'..')]
         encoding = sys.getfilesystemencoding()
 
-        with CachedDir(self.cache, upath, self.io) as f:
+        with self.cache.open_dir(upath, self.io) as f:
             for c in f.listdir():
                 entries.append(fuse.Direntry(c.encode(encoding)))
 
@@ -94,11 +94,15 @@ class TahoeFuseFS(fuse.Fuse):
 
     @ioerrwrap
     def open(self, path, flags):
+        with print_lock:
+            print "OPEN", path, flags
         upath = self.cache.get_upath(path)
-        return CachedFile(self.cache, upath, self.io, flags)
+        return self.cache.open_file(upath, self.io, flags)
 
     @ioerrwrap
     def release(self, path, flags, f):
+        with print_lock:
+            print "RELEASE", path, flags, f
         upath = self.cache.get_upath(path)
         try:
             f.upload(self.io, upath)
@@ -108,18 +112,34 @@ class TahoeFuseFS(fuse.Fuse):
 
     @ioerrwrap
     def read(self, path, size, offset, f):
+        with print_lock:
+            print "READ", path, size, offset, f
         upath = self.cache.get_upath(path)
         return f.read(self.io, offset, size)
 
     @ioerrwrap
     def write(self, path, data, offset, f):
+        with print_lock:
+            print "WRITE", path, len(data), offset, f
         upath = self.cache.get_upath(path)
         f.write(self.io, offset, data)
         return len(data)
 
     @ioerrwrap
     def ftruncate(self, path, size, f):
+        with print_lock:
+            print "FTRUNCATE", path, size, f
         f.truncate(size)
+        return 0
+
+    @ioerrwrap
+    def truncate(self, path, size):
+        with print_lock:
+            print "TRUNCATE", path, size
+        upath = self.cache.get_upath(path)
+        with self.cache.open_file(upath, self.io, os.O_RDWR) as f:
+            f.truncate(size)
+            f.upload(self.io, upath)
         return 0
 
     # -- Handleless ops
@@ -129,11 +149,11 @@ class TahoeFuseFS(fuse.Fuse):
         upath = self.cache.get_upath(path)
 
         if upath == u'':
-            with CachedDir(self.cache, upath, self.io) as dir:
+            with self.cache.open_dir(upath, self.io) as dir:
                 info = dir.get_attr()
         else:
             upath_parent = self.cache.get_upath_parent(path)
-            with CachedDir(self.cache, upath_parent, self.io) as dir:
+            with self.cache.open_dir(upath_parent, self.io) as dir:
                 info = dir.get_child_attr(os.path.basename(upath))
 
         if info['type'] == 'dir':
