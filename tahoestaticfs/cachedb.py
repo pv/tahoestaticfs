@@ -158,6 +158,17 @@ class CacheDB(object):
                 else:
                     tot_size += st.st_size
 
+    def invalidate(self):
+        with self.lock:
+            for basename in os.listdir(self.path):
+                if basename == 'salt':
+                    continue
+                fn = os.path.join(self.path, basename)
+                if os.path.isfile(fn):
+                    os.unlink(fn)
+
+            self.open_items = {}
+
     def open_file(self, upath, io, flags):
         with self.lock:
             f = self.get_file(upath, io)
