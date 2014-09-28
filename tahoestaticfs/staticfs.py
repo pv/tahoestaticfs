@@ -5,6 +5,7 @@ import errno
 import stat
 import traceback
 import threading
+import logging
 
 import fuse
 
@@ -20,6 +21,12 @@ def ioerrwrap(func):
         try:
             return func(*a, **kw)
         except (IOError, OSError), e:
+            # Unexpected error condition: print traceback
+            with print_lock:
+                msg = "\n".join(["-"*80,
+                                 traceback.format_exc(),
+                                 "-"*80])
+                logging.debug(msg)
             if hasattr(e, 'errno') and isinstance(e.errno, int):
                 # Standard operation
                 return -e.errno
@@ -27,11 +34,10 @@ def ioerrwrap(func):
         except:
             # Unexpected error condition: print traceback
             with print_lock:
-                print >> sys.stderr, "-"*80
-                traceback.print_exc()
-                print >> sys.stderr, "-"*80
-                sys.stderr.flush()
-                sys.stdout.flush()
+                msg = "\n".join(["-"*80,
+                                 traceback.format_exc(),
+                                 "-"*80])
+                logging.warning(msg)
             raise
 
     wrapper.__name__ = func.__name__
