@@ -74,7 +74,7 @@ class TahoeStaticFS(fuse.Fuse):
             rootcap = os.environ[cap_env]
             del os.environ[cap_env]
         else:
-            rootcap = raw_input('Root dircap: ')
+            rootcap = raw_input('Root dircap: ').strip()
 
         try:
             rootcap = rootcap.decode('ascii')
