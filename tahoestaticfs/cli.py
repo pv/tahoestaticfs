@@ -7,6 +7,7 @@ environment variable. If it is not given, it is read from stdin on start.
 
 """
 import os
+import sys
 import fuse
 
 from tahoestaticfs.staticfs import TahoeStaticFS
@@ -19,10 +20,12 @@ def main():
     usage += "".join(fuse.Fuse.fusage.splitlines(1)[2:])
 
     cap_env = 'TAHOESTATICFS_DIRCAP'
-    if cap_env in os.environ:
-        rootcap = os.environ[cap_env]
-    else:
-        rootcap = raw_input('Root dircap: ')
+    rootcap = None
+    if '-h' not in sys.argv and '--help' not in sys.argv:
+        if cap_env in os.environ:
+            rootcap = os.environ[cap_env]
+        else:
+            rootcap = raw_input('Root dircap: ')
 
     fs = TahoeStaticFS(rootcap=rootcap, version=__version__, usage=usage)
     fs.parse(errex=1)
