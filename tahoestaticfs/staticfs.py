@@ -40,17 +40,19 @@ def ioerrwrap(func):
 
 
 class TahoeStaticFS(fuse.Fuse):
-    def __init__(self, rootcap, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super(TahoeStaticFS, self).__init__(*args, **kwargs)
         self.parser.add_option('-c', '--cache', dest='cache', help="Cache directory")
         self.parser.add_option('-u', '--node-url', dest='node_url', help="Tahoe gateway node URL")
         self.parser.add_option('-D', '--cache-data', dest='cache_data', action="store_true", help="Cache also file data")
         self.parser.add_option('-S', '--cache-size', dest='cache_size', help="Target cache size", default="1GB")
-        self.rootcap = rootcap
 
     def main(self, args=None):
-        options = self.cmdline[0]
+        if not self.fuse_args.mount_expected():
+            fuse.Fuse.main(self, args)
+            return
 
+        options = self.cmdline[0]
         if options.cache is None:
             print("error: --cache not specified")
             sys.exit(1)
@@ -61,9 +63,24 @@ class TahoeStaticFS(fuse.Fuse):
         if not os.path.isdir(options.cache):
             os.makedirs(options.cache)
 
-        node_url = options.node_url.decode(sys.getfilesystemencoding())
-        rootcap = self.rootcap.decode('ascii')
-        del self.rootcap
+        cap_env = 'TAHOESTATICFS_DIRCAP'
+        if cap_env in os.environ:
+            rootcap = os.environ[cap_env]
+            del os.environ[cap_env]
+        else:
+            rootcap = raw_input('Root dircap: ')
+
+        try:
+            rootcap = rootcap.decode('ascii')
+        except UnicodeError:
+            print("error: invalid rootcap (non-ascii characters)")
+            sys.exit(1)
+
+        try:
+            node_url = options.node_url.decode(sys.getfilesystemencoding())
+        except UnicodeError:
+            print("error: invalid node URL")
+            sys.exit(1)
 
         try:
             cache_size = parse_size(options.cache_size)
