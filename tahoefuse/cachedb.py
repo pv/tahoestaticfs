@@ -32,9 +32,8 @@ class CacheDB(object):
         # Cache lock
         self.lock = threading.RLock()
 
-        # Open files
-        self.open_dirs = {}
-        self.open_files = {}
+        # Open files and dirs
+        self.open_items = {}
 
         # List of alive files
         self.alive_files = []
@@ -62,8 +61,9 @@ class CacheDB(object):
                     raise ValueError()
         except (IOError, OSError, ValueError):
             # Start with new salt
-            salt = Random.new().read(32)
-            salt_hkdf = Random.new().read(32)
+            rnd = Random.new()
+            salt = rnd.read(32)
+            salt_hkdf = rnd.read(32)
             with open(salt_fn, 'wb') as f:
                 f.write(salt)
                 f.write(salt_hkdf)
@@ -133,11 +133,56 @@ class CacheDB(object):
 
     def open_file(self, upath, io, flags):
         with self.lock:
-            return CachedFile(self, upath, io, flags)
+            f = self.get_file(upath, io, creat=(flags & os.O_CREAT), excl=(flags & os.O_EXCL))
+            return CachedFileHandle(upath, f, flags)
 
     def open_dir(self, upath, io):
         with self.lock:
-            return CachedDir(self, upath, io)
+            f = self.get_dir(upath, io)
+            # CachedDir also serves as the handle
+            return f
+
+    def close_file(self, f):
+        with self.lock:
+            c = f.cached_file
+            upath = f.upath
+            f.close()
+            if c.closed:
+                del self.open_items[upath]
+
+    def close_dir(self, f):
+        with self.lock:
+            c = f
+            upath = f.upath
+            f.close()
+            if c.closed:
+                del self.open_items[upath]
+
+    def get_file(self, upath, io, creat=False, excl=False):
+        with self.lock:
+            f = self.open_items.get(upath)
+            if f is None:
+                f = CachedFile(self, upath, io, creat=creat, excl=excl)
+                self.open_items[upath] = f
+                return f
+            else:
+                if excl and f is not None:
+                    raise IOError(errno.EEXIST, "file already exists")
+                if not isinstance(f, CachedFile):
+                    raise IOError(errno.EISDIR, "item is a directory")
+                return f
+
+    def get_dir(self, upath, io):
+        with self.lock:
+            f = self.open_items.get(upath)
+            if f is None:
+                f = CachedDir(self, upath, io)
+                self.open_items[upath] = f
+                return f
+            else:
+                if not isinstance(f, CachedDir):
+                    raise IOError(errno.ENOTDIR, "item is a file")
+                return f
 
     def get_upath_parent(self, path):
         return self.get_upath(os.path.dirname(os.path.normpath(path)))
@@ -167,13 +212,18 @@ class CacheDB(object):
         return os.path.join(self.path, fn), key
 
 
-class CachedFile(object):
-    direct_io = False
-    keep_cache = False
+class CachedFileHandle(object):
+    """
+    Logical file handle. There may be multiple open file handles
+    corresponding to the same logical file.
+    """
 
-    def __init__(self, cachedb, upath, io, flags):
-        self.closed = False
+    def __init__(self, upath, cached_file, flags):
+        self.cached_file = cached_file
+        self.cached_file.incref()
+        self.lock = threading.RLock()
         self.flags = flags
+        self.upath = upath
 
         self.writeable = (self.flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_WRONLY)
         self.readable = (self.flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_RDONLY)
@@ -194,6 +244,60 @@ class CachedFile(object):
             raise IOError(errno.EINVAL, "O_TRUNC without writeable file")
         if (self.flags & os.O_EXCL) and not self.writeable:
             raise IOError(errno.EINVAL, "O_EXCL without writeable file")
+        if self.flags & os.O_TRUNC:
+            self.cached_file.truncate(0)
+
+    def close(self):
+        with self.lock:
+            if self.cached_file is None:
+                raise IOError(errno.EINVAL, "Operation on a closed file")
+            c = self.cached_file
+            self.cached_file = None
+            c.decref()
+
+    def truncate(self, size):
+        with self.lock:
+            if self.cached_file is None:
+                raise IOError(errno.EINVAL, "Operation on a closed file")
+            if not self.writeable:
+                raise IOError(errno.EINVAL, "File not writeable")
+            return self.cached_file.truncate(size)
+
+    def read(self, io, offset, length):
+        with self.lock:
+            if self.cached_file is None:
+                raise IOError(errno.EINVAL, "Operation on a closed file")
+            if not self.readable:
+                raise IOError(errno.EINVAL, "File not readable")
+            return self.cached_file.read(io, offset, length)
+
+    def write(self, io, offset, data):
+        with self.lock:
+            if self.cached_file is None:
+                raise IOError(errno.EINVAL, "Operation on a closed file")
+            if not self.writeable:
+                raise IOError(errno.EINVAL, "File not writeable")
+            if self.flags & os.O_APPEND:
+                offset = self.cached_file.get_size()
+            return self.cached_file.write(io, offset, data)
+
+    def upload(self, io, upath):
+        with self.lock:
+            self.cached_file.upload(io, upath)
+
+
+class CachedFile(object):
+    """
+    Logical file on-disk. Nameless (deleted) files have upath=None.
+    There should be only a single CachedFile instance is per each logical file.
+    """
+
+    direct_io = False
+    keep_cache = False
+
+    def __init__(self, cachedb, upath, io, excl=False, creat=False):
+        self.closed = False
+        self.refcnt = 1
 
         # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions
@@ -209,28 +313,25 @@ class CachedFile(object):
 
         open_ok = True
 
-        if not self.writeable:
-            # Reuse cached data only for read-only mode
-            try:
-                self.f = CryptFile(filename, key=key, mode='r+b')
-                self.info = json.load(self.f)
+        # Reuse cached data
+        try:
+            self.f = CryptFile(filename, key=key, mode='r+b')
+            self.info = json.load(self.f)
 
-                self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
-                self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
-                self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
-            except (IOError, OSError, ValueError):
-                open_ok = False
-                if self.f is not None:
-                    self.f.close()
-                    self.f = None
-                if self.f_state is not None:
-                    self.f_state.close()
-                if self.f_data is not None:
-                    self.f_data.close()
-        else:
+            self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
+            self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
+            self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
+        except (IOError, OSError, ValueError):
             open_ok = False
+            if self.f is not None:
+                self.f.close()
+                self.f = None
+            if self.f_state is not None:
+                self.f_state.close()
+            if self.f_data is not None:
+                self.f_data.close()
 
-        if open_ok and (self.flags & os.O_EXCL):
+        if open_ok and excl:
             raise IOError(errno.EEXIST, "file already exists")
 
         if not open_ok:
@@ -238,10 +339,10 @@ class CachedFile(object):
 
             try:
                 self._load_info(upath, io)
-                if self.flags & os.O_EXCL:
+                if excl:
                     raise IOError(errno.EEXIST, "file already exists")
             except IOError, err:
-                if err.errno == errno.ENOENT and (self.flags & os.O_CREAT):
+                if err.errno == errno.ENOENT and creat:
                     self.info = {}
                 else:
                     os.unlink(filename)
@@ -258,9 +359,6 @@ class CachedFile(object):
             # Block data state file
             self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
 
-        if self.flags & os.O_TRUNC:
-            self.block_cache.truncate(0)
-
     def _load_info(self, upath, io, iscap=False):
         try:
             self.info = io.get_info(upath, iscap=iscap)
@@ -271,6 +369,16 @@ class CachedFile(object):
         self.f.truncate(0)
         self.f.seek(0)
         json.dump(self.info, self.f)
+
+    def incref(self):
+        with self.lock:
+            self.refcnt += 1
+
+    def decref(self):
+        with self.lock:
+            self.refcnt -= 1
+            if self.refcnt <= 0:
+                self.close()
 
     def close(self):
         with self.lock:
@@ -351,33 +459,29 @@ class CachedFile(object):
     def _buffer_whole_file(self, io):
         self._do_rw(io, 0, self.block_cache.get_size(), write=False, no_result=True)
 
+    def get_size(self):
+        with self.lock:
+            return self.block_cache.get_size()
+
     def read(self, io, offset, length):
         with self.lock:
-            if not self.readable:
-                raise IOError(errno.EINVAL, "File not readable")
             return self._do_rw(io, offset, length, write=False)
 
     def write(self, io, offset, data):
         with self.lock:
-            if not self.writeable:
-                raise IOError(errno.EINVAL, "File not writeable")
-
-            if self.flags & os.O_APPEND:
-                offset = self.block_cache.get_size()
-
             if len(data) > 0:
                 self.dirty = True
                 self._do_rw(io, offset, data, write=True)
 
     def truncate(self, size):
         with self.lock:
-            if not self.writeable:
-                raise IOError(errno.EINVAL, "File not writeable")
+            if size != self.block_cache.get_size():
+                self.dirty = True
             self.block_cache.truncate(size)
 
     def upload(self, io, upath):
         with self.lock:
-            if not self.writeable or not self.dirty:
+            if not self.dirty:
                 # No changes
                 return
 
@@ -405,11 +509,18 @@ class CachedFile(object):
             filecap = filecap.decode('latin1').strip()
             self._load_info(filecap, io, iscap=True)
 
-            self.close()
+            self.dirty = False
 
 
 class CachedDir(object):
+    """
+    Logical file on-disk directory. Nameless (deleted) directories have upath=None.
+    """
+
     def __init__(self, cachedb, upath, io):
+        self.upath = upath
+        self.closed = False
+
         filename, key = cachedb.get_filename_and_key(upath)
         try:
             with CryptFile(filename, key=key, mode='rb') as f:

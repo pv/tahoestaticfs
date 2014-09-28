@@ -78,15 +78,20 @@ class TahoeFuseFS(fuse.Fuse):
 
     @ioerrwrap
     def readdir(self, path, offset):
+        with print_lock:
+            print "READDIR", path
         upath = self.cache.get_upath(path)
 
         entries = [fuse.Direntry(b'.'), 
                    fuse.Direntry(b'..')]
         encoding = sys.getfilesystemencoding()
 
-        with self.cache.open_dir(upath, self.io) as f:
+        f = self.cache.open_dir(upath, self.io)
+        try:
             for c in f.listdir():
                 entries.append(fuse.Direntry(c.encode(encoding)))
+        finally:
+            self.cache.close_dir(f)
 
         return entries
 
@@ -107,7 +112,7 @@ class TahoeFuseFS(fuse.Fuse):
         try:
             f.upload(self.io, upath)
         finally:
-            f.close()
+            self.cache.close_file(f)
         return 0
 
     @ioerrwrap
@@ -137,24 +142,36 @@ class TahoeFuseFS(fuse.Fuse):
         with print_lock:
             print "TRUNCATE", path, size
         upath = self.cache.get_upath(path)
-        with self.cache.open_file(upath, self.io, os.O_RDWR) as f:
+
+        f = self.cache.open_file(upath, self.io, os.O_RDWR)
+        try:
             f.truncate(size)
             f.upload(self.io, upath)
+        finally:
+            self.cache.close_file(f)
         return 0
 
     # -- Handleless ops
 
     @ioerrwrap
     def getattr(self, path):
+        with print_lock:
+            print "GETATTR", path
         upath = self.cache.get_upath(path)
 
         if upath == u'':
-            with self.cache.open_dir(upath, self.io) as dir:
+            dir = self.cache.open_dir(upath, self.io)
+            try:
                 info = dir.get_attr()
+            finally:
+                self.cache.close_dir(dir)
         else:
             upath_parent = self.cache.get_upath_parent(path)
-            with self.cache.open_dir(upath_parent, self.io) as dir:
+            dir = self.cache.open_dir(upath_parent, self.io)
+            try:
                 info = dir.get_child_attr(os.path.basename(upath))
+            finally:
+                self.cache.close_dir(dir)
 
         if info['type'] == 'dir':
             st = fuse.Stat()
