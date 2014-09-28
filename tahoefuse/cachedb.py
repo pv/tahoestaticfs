@@ -297,7 +297,7 @@ class CachedFile(object):
 
     def __init__(self, cachedb, upath, io, excl=False, creat=False):
         self.closed = False
-        self.refcnt = 1
+        self.refcnt = 0
 
         # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions
