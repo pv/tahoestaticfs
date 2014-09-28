@@ -285,6 +285,10 @@ class CachedFileHandle(object):
         with self.lock:
             self.cached_file.upload(io, upath)
 
+    def get_size(self):
+        with self.lock:
+            return self.cached_file.get_size()
+
 
 class CachedFile(object):
     """

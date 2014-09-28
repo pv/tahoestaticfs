@@ -181,7 +181,13 @@ class TahoeFuseFS(fuse.Fuse):
             st = fuse.Stat()
             st.st_mode = stat.S_IFREG | stat.S_IRUSR | stat.S_IWUSR
             st.st_nlink = 1
-            st.st_size = info['size']
+
+            f = self.cache.open_file(upath, self.io, 0)
+            try:
+                st.st_size = f.get_size()
+            finally:
+                self.cache.close_file(f)
+
             st.st_mtime = info['mtime']
             st.st_ctime = info['ctime']
         else:
