@@ -218,7 +218,8 @@ class CacheDB(object):
             f = self.open_items.get(upath)
             if f is None:
                 cap = self._lookup_ro_cap(upath, io)
-                f = CachedFile(self, upath, io, filecap=cap)
+                f = CachedFile(self, upath, io, filecap=cap, 
+                               persistent=self.cache_data)
                 self.open_items[upath] = f
                 return f
             else:

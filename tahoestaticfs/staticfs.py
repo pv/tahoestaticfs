@@ -71,7 +71,7 @@ class TahoeStaticFS(fuse.Fuse):
             print("error: --cache-size %r is not a valid size specifier" % (options.cache_size,))
 
         self.cache = CacheDB(options.cache, rootcap, node_url,
-                             cache_size=options.cache_size, 
+                             cache_size=cache_size, 
                              cache_data=options.cache_data)
         self.io = TahoeConnection(node_url, rootcap)
 
