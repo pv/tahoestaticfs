@@ -142,6 +142,16 @@ class CacheDB(object):
             # CachedDir also serves as the handle
             return f
 
+    def unlink(self, upath):
+        with self.lock:
+            f = self.open_items.get(upath)
+            if f is not None:
+                f.unlink()
+                del self.open_items[upath]
+            else:
+                # XXX: should raise ENOENT for missing files
+                pass
+
     def close_file(self, f):
         with self.lock:
             c = f.cached_file
@@ -515,6 +525,14 @@ class CachedFile(object):
 
             self.dirty = False
 
+    def unlink(self):
+        with self.lock:
+            if self.upath is not None:
+                os.unlink(self.f.path)
+                os.unlink(self.f_state)
+                os.unlink(self.f_data)
+            self.upath = None
+
 
 class CachedDir(object):
     """
@@ -542,6 +560,8 @@ class CachedDir(object):
             raise IOError(errno.EFAULT, "failed to retrieve information")
         finally:
             f.close()
+
+        self.filename = filename
 
     def close(self):
         pass
@@ -577,6 +597,11 @@ class CachedDir(object):
                         mtime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'])
         else:
             raise IOError(errno.EBADF, "invalid entry")
+
+    def unlink(self):
+        if self.upath is not None:
+            os.unlink(self.filename)
+        self.upath = None
 
 
 class RandomString(object):
