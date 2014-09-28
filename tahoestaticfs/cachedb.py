@@ -242,8 +242,6 @@ class CacheDB(object):
                 self.open_items[upath] = f
                 return f
             else:
-                if excl and f is not None:
-                    raise IOError(errno.EEXIST, "file already exists")
                 if not isinstance(f, CachedFile):
                     raise IOError(errno.EISDIR, "item is a directory")
                 return f
