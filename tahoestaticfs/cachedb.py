@@ -490,7 +490,7 @@ class CachedFile(object):
                     # cache not ready -- fill it up
                     c_offset, c_length = pos
 
-                    if self.stream_f is not None and (self.stream_offset < c_offset or 
+                    if self.stream_f is not None and (self.stream_offset > c_offset or
                                                       c_offset > self.stream_offset + 10000):
                         self.stream_f.close()
                         self.stream_f = None
@@ -502,8 +502,8 @@ class CachedFile(object):
                         self.stream_data = []
 
                     read_offset = self.stream_offset
-                    read_bytes = 0
-                    while read_offset + read_bytes < c_length + c_offset:
+                    read_bytes = sum(len(x) for x in self.stream_data)
+                    while read_offset + read_bytes < c_offset + c_length:
                         block = self.stream_f.read(131072)
                         if not block:
                             self.stream_f.close()
