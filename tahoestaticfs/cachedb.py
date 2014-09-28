@@ -340,6 +340,10 @@ class CachedFile(object):
         self.f_state = None
         self.f_data = None
 
+        self.stream_f = None
+        self.stream_offset = 0
+        self.stream_data = []
+
         open_complete = False
 
         try:
@@ -414,6 +418,10 @@ class CachedFile(object):
     def close(self):
         with self.lock:
             if not self.closed:
+                if self.stream_f is not None:
+                    self.stream_f.close()
+                    self.stream_f = None
+                    self.stream_data = []
                 self.f_state.seek(0)
                 self.f_state.truncate(0)
                 self.block_cache.save_state(self.f_state)
@@ -432,10 +440,6 @@ class CachedFile(object):
             length = len(data)
         else:
             length = length_or_data
-
-        stream_f = None
-        stream_offset = 0
-        stream_data = []
 
         try:
             while True:
@@ -456,33 +460,37 @@ class CachedFile(object):
                     # cache not ready -- fill it up
                     c_offset, c_length = pos
 
-                    if stream_f is not None and (stream_offset < c_offset or c_offset > stream_offset + 10000):
-                        stream_f.close()
-                        stream_f = None
+                    if self.stream_f is not None and (self.stream_offset < c_offset or 
+                                                      c_offset > self.stream_offset + 10000):
+                        self.stream_f.close()
+                        self.stream_f = None
+                        self.stream_data = []
 
-                    if stream_f is None:
-                        stream_f = io.get_content(self.info[1][u'ro_uri'], c_offset, c_length, iscap=True)
-                        stream_offset = c_offset
-                        stream_data = []
+                    if self.stream_f is None:
+                        self.stream_f = io.get_content(self.info[1][u'ro_uri'], c_offset, iscap=True)
+                        self.stream_offset = c_offset
+                        self.stream_data = []
 
-                    read_offset = stream_offset
+                    read_offset = self.stream_offset
                     read_bytes = 0
                     while read_offset + read_bytes < c_length + c_offset:
-                        block = stream_f.read(131072)
+                        block = self.stream_f.read(131072)
                         if not block:
-                            stream_f.close()
-                            stream_f = None
+                            self.stream_f.close()
+                            self.stream_f = None
+                            self.stream_data = []
                             break
 
-                        stream_data.append(block)
+                        self.stream_data.append(block)
                         read_bytes += len(block)
-                        stream_offset, stream_data = self.block_cache.receive_cached_data(stream_offset, stream_data)
+                        self.stream_offset, self.stream_data = self.block_cache.receive_cached_data(
+                            self.stream_offset, self.stream_data)
 
         except HTTPError, err: 
+            if self.stream_f is not None:
+                self.stream_f.close()
+            self.stream_f = None
             raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
-        finally:
-            if stream_f is not None:
-                stream_f.close()
 
     def get_size(self):
         with self.lock:
