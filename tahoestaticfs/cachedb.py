@@ -58,23 +58,42 @@ class CacheDB(object):
         salt_fn = os.path.join(self.path, 'salt')
         try:
             with open(salt_fn, 'rb') as f:
+                numiter = f.read(4)
                 salt = f.read(32)
                 salt_hkdf = f.read(32)
-                if len(salt) != 32 or len(salt_hkdf) != 32:
+                if len(numiter) != 4 or len(salt) != 32 or len(salt_hkdf) != 32:
                     raise ValueError()
+                numiter = struct.unpack('<I', numiter)[0]
         except (IOError, OSError, ValueError):
             # Start with new salt
             rnd = Random.new()
             salt = rnd.read(32)
             salt_hkdf = rnd.read(32)
+
+            # Determine suitable number of iterations
+            start = time.time()
+            count = 0
+            while True:
+                d = pbkdf2.PBKDF2(passphrase="a"*len(rootcap.encode('ascii')),
+                                  salt="b"*len(salt),
+                                  iterations=50,
+                                  digestmodule=SHA256)
+                d.read(32)
+                count += 50
+                if time.time() > start + 0.05:
+                    break
+            numiter = max(10000, int(count * 1.0 / (time.time() - start)))
+
+            # Write salt etc.
             with open(salt_fn, 'wb') as f:
+                f.write(struct.pack('<I', numiter))
                 f.write(salt)
                 f.write(salt_hkdf)
 
         # Derive key
         d = pbkdf2.PBKDF2(passphrase=rootcap.encode('ascii'),
                           salt=salt,
-                          iterations=100000,
+                          iterations=numiter,
                           digestmodule=SHA256)
         key = d.read(32)
 
