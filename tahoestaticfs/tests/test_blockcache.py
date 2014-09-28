@@ -8,8 +8,8 @@ import array
 from Crypto import Random
 from nose.tools import assert_equal, assert_raises
 
-from tahoefuse.blockcache import BitArray, BlockCachedFile
-from tahoefuse.crypto import CryptFile
+from tahoestaticfs.blockcache import BitArray, BlockCachedFile
+from tahoestaticfs.crypto import CryptFile
 
 
 class TestBitArray(object):

@@ -1,5 +1,5 @@
 """
-Cache metadata and data of a directory tree.
+Cache metadata and data of a directory tree for read-only access.
 """
 
 import os
@@ -14,20 +14,25 @@ from Crypto.Hash import HMAC, SHA256, SHA512
 from Crypto import Random
 import pbkdf2
 
-from tahoefuse.tahoeio import HTTPError, TahoeConnection
-from tahoefuse.crypto import CryptFile, HKDF_SHA256_extract, HKDF_SHA256_expand
-from tahoefuse.blockcache import BlockCachedFile
+from tahoestaticfs.tahoeio import HTTPError, TahoeConnection
+from tahoestaticfs.crypto import CryptFile, HKDF_SHA256_extract, HKDF_SHA256_expand
+from tahoestaticfs.blockcache import BlockCachedFile
 
 
 class CacheDB(object):
-    def __init__(self, path, rootcap, node_url):
+    def __init__(self, path, rootcap, node_url, cache_size, cache_data):
         if not os.path.isdir(path):
             raise IOError(errno.ENOENT, "Cache directory is not an existing directory")
 
         assert isinstance(rootcap, unicode)
 
+        self.cache_size = cache_size
+        self.cache_data = cache_data
+
         self.path = path
         self.prk = self._generate_prk(rootcap)
+
+        self.last_size_check_time = 0
 
         # Cache lock
         self.lock = threading.RLock()
@@ -35,14 +40,12 @@ class CacheDB(object):
         # Open files and dirs
         self.open_items = {}
 
-        # List of alive files
-        self.alive_files = []
-
-        # Load alive files
-        self._load_alive_files()
-
         # Remove dead files
-        self._cleanup()
+        with self.lock:
+            self._cleanup()
+
+        # Restrict cache size
+        self._restrict_size()
 
     def _generate_prk(self, rootcap):
         # Cache master key is derived from hashed rootcap and salt via
@@ -78,13 +81,12 @@ class CacheDB(object):
         # HKDF private key material for per-file keys
         return HKDF_SHA256_extract(salt=salt_hkdf, key=key)
 
-    def _load_alive_files(self):
+    def _cleanup(self):
         """
-        Walk through the cached directory tree, and record in
-        self.alive_files which cache files are reachable from the
-        root.
+        Walk through the cached directory tree, and remove files not
+        reachable from the root.
         """
-        self.alive_files = []
+        alive_files = []
 
         stack = []
 
@@ -109,7 +111,7 @@ class CacheDB(object):
             except (IOError, OSError, ValueError):
                 continue
 
-            self.alive_files.append((os.path.basename(fn), upath))
+            alive_files.append((os.path.basename(fn), upath))
 
             for c_fn, c_info in children:
                 c_upath = os.path.join(upath, c_fn)
@@ -120,20 +122,45 @@ class CacheDB(object):
                 elif c_info[0] == u'filenode':
                     for ext in (None, b'state', b'data'):
                         c_fn, c_key = self.get_filename_and_key(c_upath, ext=ext)
-                        self.alive_files.append((os.path.basename(c_fn), c_upath))
+                        alive_files.append((os.path.basename(c_fn), c_upath))
 
-    def _cleanup(self):
-        alive_file_set = set(x[0] for x in self.alive_files)
+        alive_file_set = set(x[0] for x in alive_files)
         for basename in os.listdir(self.path):
             if basename == 'salt':
                 continue
-            if basename not in alive_file_set:
-                fn = os.path.join(self.path, basename)
+            fn = os.path.join(self.path, basename)
+            if basename not in alive_file_set and os.path.isfile(fn):
                 os.unlink(fn)
+
+    def _restrict_size(self):
+        def get_cache_score(entry):
+            fn, st = entry
+            return -cache_score(size=st.st_size, t=now-st.st_mtime)
+
+        with self.lock:
+            now = time.time()
+            if now < self.last_size_check_time + 60:
+                return
+
+            self.last_size_check_time = now
+
+            files = [os.path.join(self.path, fn) 
+                     for fn in os.listdir(self.path) 
+                     if fn != "salt"]
+            entries = [(fn, os.stat(fn)) for fn in files]
+            entries.sort(key=get_cache_score)
+
+            tot_size = 0
+            for fn, st in entries:
+                if tot_size + st.st_size > self.cache_size:
+                    # unlink
+                    os.unlink(fn)
+                else:
+                    tot_size += st.st_size
 
     def open_file(self, upath, io, flags):
         with self.lock:
-            f = self.get_file(upath, io, creat=(flags & os.O_CREAT), excl=(flags & os.O_EXCL))
+            f = self.get_file(upath, io)
             return CachedFileHandle(upath, f, flags)
 
     def open_dir(self, upath, io):
@@ -142,16 +169,6 @@ class CacheDB(object):
             # CachedDir also serves as the handle
             return f
 
-    def unlink(self, upath):
-        with self.lock:
-            f = self.open_items.get(upath)
-            if f is not None:
-                f.unlink()
-                del self.open_items[upath]
-            else:
-                # XXX: should raise ENOENT for missing files
-                pass
-
     def close_file(self, f):
         with self.lock:
             c = f.cached_file
@@ -159,6 +176,7 @@ class CacheDB(object):
             f.close()
             if c.closed:
                 del self.open_items[upath]
+                self._restrict_size()
 
     def close_dir(self, f):
         with self.lock:
@@ -167,12 +185,29 @@ class CacheDB(object):
             f.close()
             if c.closed:
                 del self.open_items[upath]
+                self._restrict_size()
 
-    def get_file(self, upath, io, creat=False, excl=False):
+    def _lookup_ro_cap(self, upath, io):
+        with self.lock:
+            if upath == u'':
+                # root
+                return None
+            else:
+                entry_name = os.path.basename(upath)
+                parent_upath = os.path.dirname(upath)
+
+                parent = self.open_dir(parent_upath, io)
+                try:
+                    return parent.get_child_attr(entry_name)['ro_uri']
+                finally:
+                    self.close_dir(parent)
+
+    def get_file(self, upath, io):
         with self.lock:
             f = self.open_items.get(upath)
             if f is None:
-                f = CachedFile(self, upath, io, creat=creat, excl=excl)
+                cap = self._lookup_ro_cap(upath, io)
+                f = CachedFile(self, upath, io, filecap=cap)
                 self.open_items[upath] = f
                 return f
             else:
@@ -186,7 +221,8 @@ class CacheDB(object):
         with self.lock:
             f = self.open_items.get(upath)
             if f is None:
-                f = CachedDir(self, upath, io)
+                cap = self._lookup_ro_cap(upath, io)
+                f = CachedDir(self, upath, io, dircap=cap)
                 self.open_items[upath] = f
                 return f
             else:
@@ -228,6 +264,9 @@ class CachedFileHandle(object):
     corresponding to the same logical file.
     """
 
+    direct_io = False
+    keep_cache = False
+
     def __init__(self, upath, cached_file, flags):
         self.cached_file = cached_file
         self.cached_file.incref()
@@ -238,6 +277,8 @@ class CachedFileHandle(object):
         self.writeable = (self.flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_WRONLY)
         self.readable = (self.flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_RDONLY)
 
+        if self.writeable:
+            raise IOError(os.EACCESS, "read-only filesystem")
         if self.flags & os.O_ASYNC:
             raise IOError(errno.EINVAL, "O_ASYNC flag is not supported")
         if self.flags & os.O_DIRECT:
@@ -254,8 +295,6 @@ class CachedFileHandle(object):
             raise IOError(errno.EINVAL, "O_TRUNC without writeable file")
         if (self.flags & os.O_EXCL) and not self.writeable:
             raise IOError(errno.EINVAL, "O_EXCL without writeable file")
-        if self.flags & os.O_TRUNC:
-            self.cached_file.truncate(0)
 
     def close(self):
         with self.lock:
@@ -265,14 +304,6 @@ class CachedFileHandle(object):
             self.cached_file = None
             c.decref()
 
-    def truncate(self, size):
-        with self.lock:
-            if self.cached_file is None:
-                raise IOError(errno.EINVAL, "Operation on a closed file")
-            if not self.writeable:
-                raise IOError(errno.EINVAL, "File not writeable")
-            return self.cached_file.truncate(size)
-
     def read(self, io, offset, length):
         with self.lock:
             if self.cached_file is None:
@@ -281,20 +312,6 @@ class CachedFileHandle(object):
                 raise IOError(errno.EINVAL, "File not readable")
             return self.cached_file.read(io, offset, length)
 
-    def write(self, io, offset, data):
-        with self.lock:
-            if self.cached_file is None:
-                raise IOError(errno.EINVAL, "Operation on a closed file")
-            if not self.writeable:
-                raise IOError(errno.EINVAL, "File not writeable")
-            if self.flags & os.O_APPEND:
-                offset = self.cached_file.get_size()
-            return self.cached_file.write(io, offset, data)
-
-    def upload(self, io, upath):
-        with self.lock:
-            self.cached_file.upload(io, upath)
-
     def get_size(self):
         with self.lock:
             return self.cached_file.get_size()
@@ -302,16 +319,14 @@ class CachedFileHandle(object):
 
 class CachedFile(object):
     """
-    Logical file on-disk. Nameless (deleted) files have upath=None.
-    There should be only a single CachedFile instance is per each logical file.
+    Logical file on-disk. There should be only a single CachedFile
+    instance is per each logical file.
     """
 
-    direct_io = False
-    keep_cache = False
-
-    def __init__(self, cachedb, upath, io, excl=False, creat=False):
+    def __init__(self, cachedb, upath, io, filecap=None, persistent=False):
         self.closed = False
         self.refcnt = 0
+        self.persistent = persistent
 
         # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions
@@ -325,18 +340,21 @@ class CachedFile(object):
         self.f_state = None
         self.f_data = None
 
-        open_ok = True
+        open_complete = False
 
-        # Reuse cached data
         try:
+            # Reuse cached metadata
             self.f = CryptFile(filename, key=key, mode='r+b')
             self.info = json.load(self.f)
 
-            self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
-            self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
-            self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
+            if persistent:
+                # Reuse cached data
+                self.f_state = CryptFile(filename_state, key=key_state, mode='r+b')
+                self.f_data = CryptFile(filename_data, key=key_data, mode='r+b')
+                self.block_cache = BlockCachedFile.restore_state(self.f_data, self.f_state)
+                open_complete = True
         except (IOError, OSError, ValueError):
-            open_ok = False
+            open_complete = False
             if self.f is not None:
                 self.f.close()
                 self.f = None
@@ -345,20 +363,15 @@ class CachedFile(object):
             if self.f_data is not None:
                 self.f_data.close()
 
-        if open_ok and excl:
-            raise IOError(errno.EEXIST, "file already exists")
-
-        if not open_ok:
-            self.f = CryptFile(filename, key=key, mode='w+b')
-
-            try:
-                self._load_info(upath, io)
-                if excl:
-                    raise IOError(errno.EEXIST, "file already exists")
-            except IOError, err:
-                if err.errno == errno.ENOENT and creat:
-                    self.info = {}
-                else:
+        if not open_complete:
+            if self.f is None:
+                self.f = CryptFile(filename, key=key, mode='w+b')
+                try:
+                    if filecap is not None:
+                        self._load_info(filecap, io, iscap=True)
+                    else:
+                        self._load_info(upath, io)
+                except IOError, err:
                     os.unlink(filename)
                     self.f.close()
                     raise
@@ -372,6 +385,10 @@ class CachedFile(object):
 
             # Block data state file
             self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
+
+        os.utime(self.f.path, None)
+        os.utime(self.f_data.path, None)
+        os.utime(self.f_state.path, None)
 
     def _load_info(self, upath, io, iscap=False):
         try:
@@ -403,14 +420,11 @@ class CachedFile(object):
                 self.f_state.close()
                 self.block_cache.close()
                 self.f.close()
+
+                if not self.persistent:
+                    os.unlink(self.f_state.path)
+                    os.unlink(self.f_data.path)
             self.closed = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-        return False
 
     def _do_rw(self, io, offset, length_or_data, write=False, no_result=False):
         if write:
@@ -470,9 +484,6 @@ class CachedFile(object):
             if stream_f is not None:
                 stream_f.close()
 
-    def _buffer_whole_file(self, io):
-        self._do_rw(io, 0, self.block_cache.get_size(), write=False, no_result=True)
-
     def get_size(self):
         with self.lock:
             return self.block_cache.get_size()
@@ -481,65 +492,13 @@ class CachedFile(object):
         with self.lock:
             return self._do_rw(io, offset, length, write=False)
 
-    def write(self, io, offset, data):
-        with self.lock:
-            if len(data) > 0:
-                self.dirty = True
-                self._do_rw(io, offset, data, write=True)
-
-    def truncate(self, size):
-        with self.lock:
-            if size != self.block_cache.get_size():
-                self.dirty = True
-            self.block_cache.truncate(size)
-
-    def upload(self, io, upath):
-        with self.lock:
-            if not self.dirty:
-                # No changes
-                return
-
-            # Buffer all data
-            self._buffer_whole_file(io)
-
-            # Upload the whole file
-            class Fwrapper(object):
-                def __init__(self, block_cache):
-                    self.block_cache = block_cache
-                    self.size = block_cache.get_size()
-                    self.f = self.block_cache.get_file()
-                    self.f.seek(0)
-                def __len__(self):
-                    return self.size
-                def read(self, size):
-                    return self.f.read(size)
-
-            fw = Fwrapper(self.block_cache)
-            try:
-                filecap = io.put_file(upath, fw)
-            except HTTPError, err:
-                raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
-
-            filecap = filecap.decode('latin1').strip()
-            self._load_info(filecap, io, iscap=True)
-
-            self.dirty = False
-
-    def unlink(self):
-        with self.lock:
-            if self.upath is not None:
-                os.unlink(self.f.path)
-                os.unlink(self.f_state)
-                os.unlink(self.f_data)
-            self.upath = None
-
 
 class CachedDir(object):
     """
-    Logical file on-disk directory. Nameless (deleted) directories have upath=None.
+    Logical file on-disk directory.
     """
 
-    def __init__(self, cachedb, upath, io):
+    def __init__(self, cachedb, upath, io, dircap=None):
         self.upath = upath
         self.closed = False
 
@@ -547,13 +506,17 @@ class CachedDir(object):
         try:
             with CryptFile(filename, key=key, mode='rb') as f:
                 self.info = json.load(f)
+            os.utime(filename, None)
             return
         except (IOError, OSError, ValueError):
             pass
 
         f = CryptFile(filename, key=key, mode='w+b')
         try:
-            self.info = io.get_info(upath)
+            if dircap is not None:
+                self.info = io.get_info(dircap, iscap=True)
+            else:
+                self.info = io.get_info(upath)
             json.dump(self.info, f)
         except (HTTPError, ValueError):
             os.unlink(filename)
@@ -565,13 +528,6 @@ class CachedDir(object):
 
     def close(self):
         pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-        return False
 
     def listdir(self):
         return list(self.info[1][u'children'].keys())
@@ -588,20 +544,17 @@ class CachedDir(object):
         info = children[childname]
         if info[0] == u'dirnode':
             return dict(type='dir', 
+                        ro_uri=info[1][u'ro_uri'],
                         ctime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'],
                         mtime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'])
         elif info[0] == u'filenode':
-            return dict(type='file', 
-                        size=info[1]['size'],
+            return dict(type='file',
+                        size=info[1][u'size'],
+                        ro_uri=info[1][u'ro_uri'],
                         ctime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'],
                         mtime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'])
         else:
             raise IOError(errno.EBADF, "invalid entry")
-
-    def unlink(self):
-        if self.upath is not None:
-            os.unlink(self.filename)
-        self.upath = None
 
 
 class RandomString(object):
@@ -617,3 +570,29 @@ class RandomString(object):
             return self._random.read(len(xrange(*k.indices(self.size))))
         else:
             raise IndexError("invalid index")
+
+
+
+# constants for cache score calculation
+_DOWNLOAD_SPEED = 1e6  # byte/sec
+_LATENCY = 1.0 # sec
+
+def _access_rate(size, t):
+    """Return estimated access rate (unit 1/sec). `t` is time since last access"""
+    if t < 0:
+        return 0.0
+    size_unit = 100e3
+    size_prob = 1 / (1 + (size/size_unit)**2)
+    return size_prob / (_LATENCY + t)
+
+def cache_score(size, t):
+    """
+    Return cache score for file with size `size` and time since last access `t`.
+    Bigger number means higher priority.
+    """
+
+    # Estimate how often it is downloaded
+    rate = _access_rate(size, t)
+
+    # Time cost for re-retrieval
+    return rate * (_LATENCY + size / _DOWNLOAD_SPEED)
