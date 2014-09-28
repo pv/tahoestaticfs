@@ -21,6 +21,7 @@ from tahoestaticfs.blockcache import BlockCachedFile
 
 class CacheDB(object):
     def __init__(self, path, rootcap, node_url, cache_size, cache_data):
+        path = os.path.abspath(path)
         if not os.path.isdir(path):
             raise IOError(errno.ENOENT, "Cache directory is not an existing directory")
 
