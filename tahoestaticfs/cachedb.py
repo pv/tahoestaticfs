@@ -664,9 +664,7 @@ class RandomString(object):
 
 def json_zlib_dump(obj, fp):
     try:
-        f = ZlibCompressor(fp)
-        json.dump(obj, f)
-        f.close()
+        fp.write(zlib.compress(json.dumps(obj), 3))
     except zlib.error:
         raise ValueError("compression error")
 
@@ -676,18 +674,6 @@ def json_zlib_load(fp):
         return json.load(ZlibDecompressor(fp))
     except zlib.error:
         raise ValueError("invalid compressed stream")
-
-
-class ZlibCompressor(object):
-    def __init__(self, fp):
-        self.fp = fp
-        self.compressor = zlib.compressobj(3)
-
-    def write(self, data):
-        self.fp.write(self.compressor.compress(data))
-
-    def close(self):
-        self.fp.write(self.compressor.flush())
 
 
 class ZlibDecompressor(object):
