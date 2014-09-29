@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import json
+import zlib
 import struct
 import errno
 import threading
@@ -124,7 +125,7 @@ class CacheDB(object):
 
             try:
                 with CryptFile(fn, key=key, mode='rb') as f:
-                    data = json.load(f)
+                    data = json_zlib_load(f)
                     if data[0] != u'dirnode':
                         raise ValueError()
                     children = data[1].get(u'children', {}).items()
@@ -379,7 +380,7 @@ class CachedFile(object):
         try:
             # Reuse cached metadata
             self.f = CryptFile(filename, key=key, mode='r+b')
-            self.info = json.load(self.f)
+            self.info = json_zlib_load(self.f)
 
             if persistent:
                 # Reuse cached data
@@ -433,7 +434,7 @@ class CachedFile(object):
             raise IOError(errno.EFAULT, "failed to retrieve information")
         self.f.truncate(0)
         self.f.seek(0)
-        json.dump(self.info, self.f)
+        json_zlib_dump(self.info, self.f)
 
     def incref(self):
         with self.lock:
@@ -543,7 +544,7 @@ class CachedDir(object):
         filename, key = cachedb.get_filename_and_key(upath)
         try:
             with CryptFile(filename, key=key, mode='rb') as f:
-                self.info = json.load(f)
+                self.info = json_zlib_load(f)
             os.utime(filename, None)
             return
         except (IOError, OSError, ValueError):
@@ -555,7 +556,7 @@ class CachedDir(object):
                 self.info = io.get_info(dircap, iscap=True)
             else:
                 self.info = io.get_info(upath)
-            json.dump(self.info, f)
+            json_zlib_dump(self.info, f)
         except (HTTPError, ValueError):
             os.unlink(filename)
             raise IOError(errno.EFAULT, "failed to retrieve information")
@@ -609,6 +610,70 @@ class RandomString(object):
         else:
             raise IndexError("invalid index")
 
+
+def json_zlib_dump(obj, fp):
+    try:
+        f = ZlibCompressor(fp)
+        json.dump(obj, f)
+        f.close()
+    except zlib.error:
+        raise ValueError("compression error")
+
+
+def json_zlib_load(fp):
+    try:
+        return json.load(ZlibDecompressor(fp))
+    except zlib.error:
+        raise ValueError("invalid compressed stream")
+
+
+class ZlibCompressor(object):
+    def __init__(self, fp):
+        self.fp = fp
+        self.compressor = zlib.compressobj(3)
+
+    def write(self, data):
+        self.fp.write(self.compressor.compress(data))
+
+    def close(self):
+        self.fp.write(self.compressor.flush())
+
+
+class ZlibDecompressor(object):
+    def __init__(self, fp):
+        self.fp = fp
+        self.decompressor = zlib.decompressobj()
+        self.buf = b""
+        self.eof = False
+
+    def read(self, sz=None):
+        if sz is not None and sz <= 0:
+            return b""
+
+        while not self.eof:
+            if sz is not None and sz < len(self.buf):
+                block = self.buf[:sz]
+                self.buf = self.buf[sz:]
+                return block
+
+            block = self.decompressor.decompress(self.fp.read(min(131072, sz)))
+            if not block:
+                self.buf += self.decompressor.flush()
+                self.eof = True
+                break
+
+            if not self.buf and sz is not None and len(block) == sz:
+                return block
+
+            self.buf += block
+
+        if sz is None:
+            block = self.buf
+            self.buf = b""
+        else:
+            block = self.buf[:sz]
+            self.buf = self.buf[sz:]
+        return block
 
 
 # constants for cache score calculation
