@@ -12,11 +12,11 @@ import errno
 import threading
 import heapq
 
-from Crypto.Hash import HMAC, SHA256, SHA512
+from Crypto.Hash import HMAC, SHA512
 from Crypto import Random
-import pbkdf2
+from M2Crypto.EVP import pbkdf2
 
-from tahoestaticfs.tahoeio import HTTPError, TahoeConnection
+from tahoestaticfs.tahoeio import HTTPError
 from tahoestaticfs.crypto import CryptFile, HKDF_SHA256_extract, HKDF_SHA256_expand
 from tahoestaticfs.blockcache import BlockCachedFile
 
@@ -81,12 +81,11 @@ class CacheDB(object):
             start = time.time()
             count = 0
             while True:
-                d = pbkdf2.PBKDF2(passphrase="a"*len(rootcap.encode('ascii')),
-                                  salt="b"*len(salt),
-                                  iterations=50,
-                                  digestmodule=SHA256)
-                d.read(32)
-                count += 50
+                pbkdf2(password="a"*len(rootcap.encode('ascii')),
+                       salt="b"*len(salt),
+                       iter=1000,
+                       keylen=32)
+                count += 1000
                 if time.time() > start + 0.05:
                     break
             numiter = max(10000, int(count * 1.0 / (time.time() - start)))
@@ -98,11 +97,10 @@ class CacheDB(object):
                 f.write(salt_hkdf)
 
         # Derive key
-        d = pbkdf2.PBKDF2(passphrase=rootcap.encode('ascii'),
-                          salt=salt,
-                          iterations=numiter,
-                          digestmodule=SHA256)
-        key = d.read(32)
+        key = pbkdf2(password=rootcap.encode('ascii'),
+                     salt=salt,
+                     iter=numiter,
+                     keylen=32)
 
         # HKDF private key material for per-file keys
         return HKDF_SHA256_extract(salt=salt_hkdf, key=key)
