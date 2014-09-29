@@ -198,8 +198,7 @@ class CacheDB(object):
     def open_dir(self, upath, io):
         with self.lock:
             f = self.get_dir(upath, io)
-            # CachedDir also serves as the handle
-            return f
+            return CachedDirHandle(upath, f)
 
     def close_file(self, f):
         with self.lock:
@@ -212,7 +211,7 @@ class CacheDB(object):
 
     def close_dir(self, f):
         with self.lock:
-            c = f
+            c = f.cached_dir
             upath = f.upath
             f.close()
             if c.closed:
@@ -346,6 +345,44 @@ class CachedFileHandle(object):
     def get_size(self):
         with self.lock:
             return self.cached_file.get_size()
+
+
+class CachedDirHandle(object):
+    """
+    Logical directory handle.
+    """
+
+    def __init__(self, upath, cached_dir):
+        self.cached_dir = cached_dir
+        self.cached_dir.incref()
+        self.lock = threading.RLock()
+        self.upath = upath
+
+    def close(self):
+        with self.lock:
+            if self.cached_dir is None:
+                raise IOError(errno.EINVAL, "Operation on a closed dir")
+            c = self.cached_dir
+            self.cached_dir = None
+            c.decref()
+
+    def listdir(self):
+        with self.lock:
+            if self.cached_dir is None:
+                raise IOError(errno.EINVAL, "Operation on a closed dir")
+            return self.cached_dir.listdir()
+
+    def get_attr(self):
+        with self.lock:
+            if self.cached_dir is None:
+                raise IOError(errno.EINVAL, "Operation on a closed dir")
+            return self.cached_dir.get_attr()
+
+    def get_child_attr(self, childname):
+        with self.lock:
+            if self.cached_dir is None:
+                raise IOError(errno.EINVAL, "Operation on a closed dir")
+            return self.cached_dir.get_child_attr(childname)
 
 
 class CachedFile(object):
@@ -534,12 +571,15 @@ class CachedFile(object):
 
 class CachedDir(object):
     """
-    Logical file on-disk directory.
+    Logical file on-disk directory. There should be only a single CachedDir
+    instance is per each logical directory.
     """
 
     def __init__(self, cachedb, upath, io, dircap=None):
         self.upath = upath
         self.closed = False
+        self.refcnt = 0
+        self.lock = threading.RLock()
 
         filename, key = cachedb.get_filename_and_key(upath)
         try:
@@ -565,8 +605,19 @@ class CachedDir(object):
 
         self.filename = filename
 
+    def incref(self):
+        with self.lock:
+            self.refcnt += 1
+
+    def decref(self):
+        with self.lock:
+            self.refcnt -= 1
+            if self.refcnt <= 0:
+                self.close()
+
     def close(self):
-        pass
+        with self.lock:
+            self.closed = True
 
     def listdir(self):
         return list(self.info[1][u'children'].keys())
