@@ -1,6 +1,8 @@
 import numpy as np
 import struct
 
+from Crypto import Random
+
 
 BLOCK_SIZE = 131072
 
@@ -93,22 +95,33 @@ class BlockCachedFile(object):
 
         return start_block, end_block, start_skip, end_skip
 
-    def _pad_file(self, new_size):
+    def _pad_file(self, new_size, random_data=False):
         """
-        Append zero bytes to self.f so that its size grows to new_size
+        Append zero or random bytes to self.f so that its size grows to new_size
         """
         if new_size <= self.actual_size:
             return
 
         self.f.seek(0, 2)
 
+        if random_data:
+            rnd = Random.new()
+
         nblocks, remainder = divmod(new_size - self.actual_size, self.block_size)
         if nblocks > 0:
-            blk = "\x00" * self.block_size
-            for j in range(nblocks):
-                self.f.write(blk)
+            if not random_data:
+                blk = "\x00" * self.block_size
+                for j in range(nblocks):
+                    self.f.write(blk)
+            else:
+                for j in range(nblocks):
+                    self.f.write(rnd.read(self.block_size))
+
         if remainder > 0:
-            self.f.write("\x00" * remainder)
+            if not random_data:
+                self.f.write("\x00" * remainder)
+            else:
+                self.f.write(rnd.read(remainder))
 
         self.actual_size = new_size
 
@@ -140,7 +153,11 @@ class BlockCachedFile(object):
                 pos = j * self.block_size
                 block = data[i*self.block_size:(i+1)*self.block_size]
                 block = block[:(self.cache_size - pos)]
-                self._pad_file(pos)
+
+                # Pad file up to position with random data --- the
+                # corresponding blocks have not been fetched yet, so
+                # it does not matter what data is written to them
+                self._pad_file(pos, random_data=True)
                 self.f.seek(pos)
                 self.f.write(block)
 

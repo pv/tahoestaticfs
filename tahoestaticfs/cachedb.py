@@ -467,9 +467,8 @@ class CachedFile(object):
                     self.f.close()
                     raise
 
-            # Create a data file filled with random data
+            # Create a data file
             self.f_data = CryptFile(filename_data, key=key_data, mode='w+b')
-            self.f_data.write(RandomString(self.info[1][u'size']))
 
             # Block cache on top of data file
             self.block_cache = BlockCachedFile(self.f_data, self.info[1][u'size'])
