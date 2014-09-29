@@ -80,12 +80,7 @@ class TahoeStaticFS(fuse.Fuse):
         if not os.path.isdir(options.cache):
             os.makedirs(options.cache)
 
-        cap_env = 'TAHOESTATICFS_DIRCAP'
-        if cap_env in os.environ:
-            rootcap = os.environ[cap_env]
-            del os.environ[cap_env]
-        else:
-            rootcap = raw_input('Root dircap: ').strip()
+        rootcap = raw_input('Root dircap: ').strip()
 
         try:
             rootcap = rootcap.decode('ascii')

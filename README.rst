@@ -26,8 +26,10 @@ Usage
     caching. Cached data is encrypted with a key derived from the
     directory capability mounted.
     
-    Dircap of the root directory is to be passed in in TAHOESTATICFS_DIRCAP
-    environment variable. If it is not given, it is read from stdin on start.
+    Dircap of the root directory is read from stdin on startup. In scripts, do::
+    
+        awk '/^root:/ {print $2}' < ~/.tahoe/private/aliases \
+            | tahoestaticfs ...
     
     Cache can be invalidated by `touch <mountpoint>/.tahoestaticfs-invalidate`,
     or by removing files in the cache directory.
@@ -46,8 +48,18 @@ Usage
 
 For example::
 
-    TAHOESTATICFS_DIRCAP="`awk '/^root:/ {print $2}' < ~./tahoe/private/aliases`" \
-    tahoestaticfs -c /var/cache/tahoefscache -D -S 5G -u http://127.0.0.1:8090 /mnt/tahoestatic
+    awk '/^root:/ {print $2}' < ~/.tahoe/private/aliases \
+        tahoestaticfs -c /var/cache/tahoefscache -D -S 5G -u http://127.0.0.1:8090 /mnt/tahoestatic
+
+.. warning::
+
+   Do **not** do this::
+
+       echo URI:DIR2:... | tahoestaticfs
+
+   That makes the root capability visible to everyone. Instead, store the root
+   capability in a file with appropriate permissions, for example reading it
+   from your Tahoe-LAFS aliases file as shown above.
 
 
 Encrypted cache
