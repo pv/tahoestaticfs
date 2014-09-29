@@ -13,7 +13,6 @@ import threading
 import heapq
 
 from Crypto.Hash import HMAC, SHA512
-from Crypto import Random
 from M2Crypto.EVP import pbkdf2
 
 from tahoestaticfs.tahoeio import HTTPError
@@ -73,9 +72,9 @@ class CacheDB(object):
                 numiter = struct.unpack('<I', numiter)[0]
         except (IOError, OSError, ValueError):
             # Start with new salt
-            rnd = Random.new()
-            salt = rnd.read(32)
-            salt_hkdf = rnd.read(32)
+            rnd = os.urandom(64)
+            salt = rnd[:32]
+            salt_hkdf = rnd[32:]
 
             # Determine suitable number of iterations
             start = time.time()
@@ -665,7 +664,6 @@ class CachedDir(object):
 
 class RandomString(object):
     def __init__(self, size):
-        self._random = Random.new()
         self.size = size
 
     def __len__(self):
@@ -673,7 +671,7 @@ class RandomString(object):
 
     def __getitem__(self, k):
         if isinstance(k, slice):
-            return self._random.read(len(xrange(*k.indices(self.size))))
+            return os.urandom(len(xrange(*k.indices(self.size))))
         else:
             raise IndexError("invalid index")
 

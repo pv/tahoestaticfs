@@ -10,7 +10,6 @@ import fcntl
 
 from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256
-from Crypto import Random
 
 
 BLOCK_SIZE = 131072
@@ -109,7 +108,6 @@ class CryptFile(object):
         self.block_dirty = False
 
         self.offset = 0
-        self._random = Random.new()
 
     def _flush_block(self):
         if self.current_block < 0:
@@ -117,7 +115,7 @@ class CryptFile(object):
         if not self.block_dirty:
             return
 
-        iv = self._random.read(self.IV_SIZE)
+        iv = os.urandom(self.IV_SIZE)
         encryptor = AES.new(self.key, AES.MODE_CBC, iv)
 
         self.fp.seek(self.HEADER_SIZE + self.current_block * (self.IV_SIZE + self.block_size))
@@ -128,7 +126,7 @@ class CryptFile(object):
             self.fp.write(encryptor.encrypt(bytes(self.block_cache)))
         else:
             # insert random padding
-            self.fp.write(encryptor.encrypt(bytes(self.block_cache) + self._random.read(16-off)))
+            self.fp.write(encryptor.encrypt(bytes(self.block_cache) + os.urandom(16-off)))
 
         self.block_dirty = False
 

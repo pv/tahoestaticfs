@@ -4,7 +4,6 @@ import shutil
 import random
 import threading
 
-from Crypto import Random
 from nose.tools import assert_equal, assert_raises
 
 from tahoestaticfs.crypto import CryptFile
@@ -49,7 +48,7 @@ class TestCryptFile(object):
     def test_random_rw(self):
         file_name = self.file_name
         file_size = 1000000
-        test_data = Random.new().read(file_size)
+        test_data = os.urandom(file_size)
         key = "a"*32
 
         f = CryptFile(file_name, key=key, mode='w+b')

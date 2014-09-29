@@ -5,7 +5,6 @@ import random
 import threading
 import array
 
-from Crypto import Random
 from nose.tools import assert_equal, assert_raises
 
 from tahoestaticfs.blockcache import BitArray, BlockCachedFile
@@ -55,7 +54,7 @@ class TestBlockCachedFile(object):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.file_name = os.path.join(self.tmpdir, 'test.dat')
-        self.cache_data = Random.new().read(656)
+        self.cache_data = os.urandom(656)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
@@ -115,8 +114,6 @@ class TestBlockCachedFile(object):
         f.close()
 
     def _do_random_rw(self, f, sim_data, file_size, max_file_size, count):
-        rnd = Random.new()
-
         for j in range(count):
             a = random.randint(0, max_file_size)
             b = random.randint(0, max_file_size)
@@ -133,7 +130,7 @@ class TestBlockCachedFile(object):
                 assert_equal(block, sim_data[a:b].tostring())
             else:
                 # write op
-                block = rnd.read(b-a)
+                block = os.urandom(b - a)
                 sim_data[a:b] = array.array('c', block)
                 self._do_write(f, a, block)
                 file_size = max(file_size, a + len(block))

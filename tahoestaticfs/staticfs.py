@@ -12,23 +12,11 @@ import fuse
 from tahoestaticfs.cachedb import CacheDB
 from tahoestaticfs.tahoeio import TahoeConnection
 
-from Crypto import Random
-
-# Crypto.Random requires that its atfork() is called after fork; so we
-# need to call it after fuse has done its daemonization forks
-RANDOM_RESET = False
-
-
 print_lock = threading.Lock()
 
 
 def ioerrwrap(func):
     def wrapper(*a, **kw):
-        global RANDOM_RESET
-        if not RANDOM_RESET:
-            Random.atfork()
-            RANDOM_RESET = True
-
         try:
             return func(*a, **kw)
         except (IOError, OSError), e:

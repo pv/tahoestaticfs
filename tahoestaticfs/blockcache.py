@@ -1,7 +1,7 @@
-import numpy as np
+import os
 import struct
 
-from Crypto import Random
+import numpy as np
 
 
 BLOCK_SIZE = 131072
@@ -104,9 +104,6 @@ class BlockCachedFile(object):
 
         self.f.seek(0, 2)
 
-        if random_data:
-            rnd = Random.new()
-
         nblocks, remainder = divmod(new_size - self.actual_size, self.block_size)
         if nblocks > 0:
             if not random_data:
@@ -115,13 +112,13 @@ class BlockCachedFile(object):
                     self.f.write(blk)
             else:
                 for j in range(nblocks):
-                    self.f.write(rnd.read(self.block_size))
+                    self.f.write(os.urandom(self.block_size))
 
         if remainder > 0:
             if not random_data:
                 self.f.write("\x00" * remainder)
             else:
-                self.f.write(rnd.read(remainder))
+                self.f.write(os.urandom(remainder))
 
         self.actual_size = new_size
 
