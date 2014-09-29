@@ -10,6 +10,7 @@ import zlib
 import struct
 import errno
 import threading
+import heapq
 
 from Crypto.Hash import HMAC, SHA256, SHA512
 from Crypto import Random
@@ -48,6 +49,10 @@ class CacheDB(object):
 
         # Restrict cache size
         self._restrict_size()
+
+        # Directory cache
+        self._max_item_cache = 500
+        self._item_cache = []
 
     def _generate_prk(self, rootcap):
         # Cache master key is derived from hashed rootcap and salt via
@@ -220,10 +225,14 @@ class CacheDB(object):
 
     def _lookup_ro_cap(self, upath, io):
         with self.lock:
-            if upath == u'':
+            if upath in self.open_items:
+                # shortcut
+                return self.open_items[upath].info[1][u'ro_uri']
+            elif upath == u'':
                 # root
                 return None
             else:
+                # lookup from parent
                 entry_name = os.path.basename(upath)
                 parent_upath = os.path.dirname(upath)
 
@@ -254,6 +263,16 @@ class CacheDB(object):
                 cap = self._lookup_ro_cap(upath, io)
                 f = CachedDir(self, upath, io, dircap=cap)
                 self.open_items[upath] = f
+
+                # Add to item cache
+                cache_item = (time.time(), CachedDirHandle(upath, f))
+                if len(self._item_cache) < self._max_item_cache:
+                    heapq.heappush(self._item_cache, cache_item)
+                else:
+                    old_time, old_fh = heapq.heapreplace(self._item_cache,
+                                                         cache_item)
+                    self.close_dir(old_fh)
+
                 return f
             else:
                 if not isinstance(f, CachedDir):
