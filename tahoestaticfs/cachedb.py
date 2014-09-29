@@ -647,25 +647,16 @@ class ZlibDecompressor(object):
         self.eof = False
 
     def read(self, sz=None):
-        if sz is not None and sz <= 0:
+        if sz is not None and not (sz > 0):
             return b""
 
-        while not self.eof:
-            if sz is not None and sz < len(self.buf):
-                block = self.buf[:sz]
-                self.buf = self.buf[sz:]
-                return block
-
-            block = self.decompressor.decompress(self.fp.read(min(131072, sz)))
+        while not self.eof and (sz is None or sz > len(self.buf)):
+            block = self.fp.read(131072)
             if not block:
                 self.buf += self.decompressor.flush()
                 self.eof = True
                 break
-
-            if not self.buf and sz is not None and len(block) == sz:
-                return block
-
-            self.buf += block
+            self.buf += self.decompressor.decompress(block)
 
         if sz is None:
             block = self.buf
