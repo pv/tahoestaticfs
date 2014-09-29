@@ -632,5 +632,9 @@ def cache_score(size, t):
     # Estimate how often it is downloaded
     rate = _access_rate(size, t)
 
+    # Maximum size up to this time
+    dl_size = _DOWNLOAD_SPEED * max(0, t - _LATENCY)
+
     # Time cost for re-retrieval
-    return rate * (_LATENCY + size / _DOWNLOAD_SPEED)
+    return rate * (_LATENCY + min(dl_size, size) / _DOWNLOAD_SPEED)
+
