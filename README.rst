@@ -92,4 +92,4 @@ The AES encryption keys are file-specific, and obtained via::
 The salt2 is a second 32-byte randomly generated salt stored as-is
 on-disk.  The 32-byte data_key is used as the AES-CBC encryption key.
 The 32-byte fn_key is used to generate filenames via
-HMAC-SHA256(fn_key, pathname).
+HMAC-SHA512(fn_key, pathname).
