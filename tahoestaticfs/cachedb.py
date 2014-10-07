@@ -331,8 +331,6 @@ class CachedFileHandle(object):
             raise IOError(errno.EINVAL, "O_DIRECT flag is not supported")
         if self.flags & os.O_DIRECTORY:
             raise IOError(errno.EINVAL, "O_DIRECTORY flag is not supported")
-        if self.flags & os.O_NOFOLLOW:
-            raise IOError(errno.EINVAL, "O_NOFOLLOW flag is not supported")
         if self.flags & os.O_SYNC:
             raise IOError(errno.EINVAL, "O_SYNC flag is not supported")
         if (self.flags & os.O_CREAT) and not self.writeable:
