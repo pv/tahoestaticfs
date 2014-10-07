@@ -326,13 +326,13 @@ class CachedFileHandle(object):
         if self.writeable:
             raise IOError(os.EACCESS, "read-only filesystem")
         if self.flags & os.O_ASYNC:
-            raise IOError(errno.EINVAL, "O_ASYNC flag is not supported")
+            raise IOError(errno.ENOTSUP, "O_ASYNC flag is not supported")
         if self.flags & os.O_DIRECT:
-            raise IOError(errno.EINVAL, "O_DIRECT flag is not supported")
+            raise IOError(errno.ENOTSUP, "O_DIRECT flag is not supported")
         if self.flags & os.O_DIRECTORY:
-            raise IOError(errno.EINVAL, "O_DIRECTORY flag is not supported")
+            raise IOError(errno.ENOTSUP, "O_DIRECTORY flag is not supported")
         if self.flags & os.O_SYNC:
-            raise IOError(errno.EINVAL, "O_SYNC flag is not supported")
+            raise IOError(errno.ENOTSUP, "O_SYNC flag is not supported")
         if (self.flags & os.O_CREAT) and not self.writeable:
             raise IOError(errno.EINVAL, "O_CREAT without writeable file")
         if (self.flags & os.O_TRUNC) and not self.writeable:
@@ -343,7 +343,7 @@ class CachedFileHandle(object):
     def close(self):
         with self.lock:
             if self.cached_file is None:
-                raise IOError(errno.EINVAL, "Operation on a closed file")
+                raise IOError(errno.EBADF, "Operation on a closed file")
             c = self.cached_file
             self.cached_file = None
             c.decref()
@@ -351,9 +351,9 @@ class CachedFileHandle(object):
     def read(self, io, offset, length):
         with self.lock:
             if self.cached_file is None:
-                raise IOError(errno.EINVAL, "Operation on a closed file")
+                raise IOError(errno.EBADF, "Operation on a closed file")
             if not self.readable:
-                raise IOError(errno.EINVAL, "File not readable")
+                raise IOError(errno.EBADF, "File not readable")
             return self.cached_file.read(io, offset, length)
 
     def get_size(self):
@@ -375,7 +375,7 @@ class CachedDirHandle(object):
     def close(self):
         with self.lock:
             if self.cached_dir is None:
-                raise IOError(errno.EINVAL, "Operation on a closed dir")
+                raise IOError(errno.EBADF, "Operation on a closed dir")
             c = self.cached_dir
             self.cached_dir = None
             c.decref()
@@ -383,19 +383,19 @@ class CachedDirHandle(object):
     def listdir(self):
         with self.lock:
             if self.cached_dir is None:
-                raise IOError(errno.EINVAL, "Operation on a closed dir")
+                raise IOError(errno.EBADF, "Operation on a closed dir")
             return self.cached_dir.listdir()
 
     def get_attr(self):
         with self.lock:
             if self.cached_dir is None:
-                raise IOError(errno.EINVAL, "Operation on a closed dir")
+                raise IOError(errno.EBADF, "Operation on a closed dir")
             return self.cached_dir.get_attr()
 
     def get_child_attr(self, childname):
         with self.lock:
             if self.cached_dir is None:
-                raise IOError(errno.EINVAL, "Operation on a closed dir")
+                raise IOError(errno.EBADF, "Operation on a closed dir")
             return self.cached_dir.get_child_attr(childname)
 
 
@@ -481,7 +481,7 @@ class CachedFile(object):
         except (HTTPError, ValueError), err:
             if isinstance(err, HTTPError) and err.code == 404:
                 raise IOError(errno.ENOENT, "no such file")
-            raise IOError(errno.EFAULT, "failed to retrieve information")
+            raise IOError(errno.EREMOTEIO, "failed to retrieve information")
         self.f.truncate(0)
         self.f.seek(0)
         json_zlib_dump(self.info, self.f)
@@ -571,7 +571,7 @@ class CachedFile(object):
             if self.stream_f is not None:
                 self.stream_f.close()
             self.stream_f = None
-            raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
+            raise IOError(errno.EREMOTEIO, "I/O error: %s" % (str(err),))
 
     def get_size(self):
         with self.lock:
@@ -612,7 +612,7 @@ class CachedDir(object):
             json_zlib_dump(self.info, f)
         except (HTTPError, ValueError):
             os.unlink(filename)
-            raise IOError(errno.EFAULT, "failed to retrieve information")
+            raise IOError(errno.EREMOTEIO, "failed to retrieve information")
         finally:
             f.close()
 
@@ -657,7 +657,7 @@ class CachedDir(object):
                         ctime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'],
                         mtime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'])
         else:
-            raise IOError(errno.EBADF, "invalid entry")
+            raise IOError(errno.ENOENT, "invalid entry")
 
 
 class RandomString(object):
