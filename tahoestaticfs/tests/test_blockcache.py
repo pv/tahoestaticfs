@@ -175,7 +175,7 @@ class TestBlockCachedFile(object):
         f.truncate(7)
         assert_equal(self._do_read(f, 0, 15), b"b"*7)
         f.truncate(0)
-        assert_raises(EOFError, self._do_read, f, 0, 15)
+        assert_equal(self._do_read(f, 0, 15), b"")
         f.close()
 
     def test_on_top_cryptfile(self):
@@ -187,7 +187,7 @@ class TestBlockCachedFile(object):
         f.truncate(7)
         assert_equal(self._do_read(f, 0, 15), b"b"*7)
         f.truncate(0)
-        assert_raises(EOFError, self._do_read, f, 0, 15)
+        assert_equal(self._do_read(f, 0, 15), b"")
         f.close()
 
     def test_save_state(self):

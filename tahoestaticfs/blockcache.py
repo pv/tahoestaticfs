@@ -222,7 +222,7 @@ class BlockCachedFile(object):
 
     def read(self, offset, length):
         if offset >= self.actual_size and offset >= self.cache_size:
-            raise EOFError("read past end of file")
+            return b''
 
         # Sanity check cache status
         if self.pre_read(offset, length) is not None:
