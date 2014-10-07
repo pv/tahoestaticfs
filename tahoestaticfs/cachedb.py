@@ -522,7 +522,9 @@ class CachedFile(object):
         else:
             length = length_or_data
 
+        self.lock.acquire()
         try:
+            preempted = False
             while True:
                 if write:
                     pos = self.block_cache.pre_write(offset, length)
@@ -542,7 +544,16 @@ class CachedFile(object):
                     c_offset, c_length = pos
 
                     if self.stream_f is not None and (self.stream_offset > c_offset or
-                                                      c_offset >= self.stream_offset + 131072):
+                                                      c_offset >= self.stream_offset + 3*131072):
+                        if not preempted:
+                            # Try to yield to a different in-flight cache operation, in case there
+                            # is one waiting for the lock
+                            preempted = True
+                            self.lock.release()
+                            time.sleep(0)
+                            self.lock.acquire()
+                            continue
+
                         self.stream_f.close()
                         self.stream_f = None
                         self.stream_data = []
@@ -572,14 +583,15 @@ class CachedFile(object):
                 self.stream_f.close()
             self.stream_f = None
             raise IOError(errno.EREMOTEIO, "I/O error: %s" % (str(err),))
+        finally:
+            self.lock.release()
 
     def get_size(self):
         with self.lock:
             return self.block_cache.get_size()
 
     def read(self, io, offset, length):
-        with self.lock:
-            return self._do_rw(io, offset, length, write=False)
+        return self._do_rw(io, offset, length, write=False)
 
 
 class CachedDir(object):
