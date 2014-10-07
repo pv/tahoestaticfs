@@ -542,7 +542,7 @@ class CachedFile(object):
                     c_offset, c_length = pos
 
                     if self.stream_f is not None and (self.stream_offset > c_offset or
-                                                      c_offset > self.stream_offset + 10000):
+                                                      c_offset >= self.stream_offset + 131072):
                         self.stream_f.close()
                         self.stream_f = None
                         self.stream_data = []
