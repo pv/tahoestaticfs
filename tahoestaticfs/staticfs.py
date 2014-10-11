@@ -118,8 +118,9 @@ class TahoeStaticFS(fuse.Fuse):
     @ioerrwrap
     def open(self, path, flags):
         upath = self.cache.get_upath(path)
-        if upath == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
-            self.cache.invalidate()
+        basename = os.path.basename(upath)
+        if basename == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
+            self.cache.invalidate(os.path.dirname(upath))
         return self.cache.open_file(upath, self.io, flags)
 
     @ioerrwrap
@@ -135,8 +136,9 @@ class TahoeStaticFS(fuse.Fuse):
     @ioerrwrap
     def create(self, path, flags, mode):
         upath = self.cache.get_upath(path)
-        if upath == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
-            self.cache.invalidate()
+        basename = os.path.basename(upath)
+        if basename == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
+            self.cache.invalidate(os.path.dirname(upath))
         return -errno.EACCES
 
     # -- Handleless ops

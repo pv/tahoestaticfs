@@ -104,19 +104,23 @@ class CacheDB(object):
         # HKDF private key material for per-file keys
         return HKDF_SHA256_extract(salt=salt_hkdf, key=key)
 
-    def _cleanup(self):
+    def _walk_cache_subtree(self, root_upath=u""):
         """
-        Walk through the cached directory tree, and remove files not
-        reachable from the root.
-        """
-        alive_files = []
+        Walk through items in the cached directory tree, starting from
+        the given root point.
 
+        Yields
+        ------
+        filename, upath
+            Filename and corresponding upath of a reached cached entry.
+
+        """
         stack = []
 
         # Start from root
-        fn, key = self.get_filename_and_key(u"")
+        fn, key = self.get_filename_and_key(root_upath)
         if os.path.isfile(fn):
-            stack.append((u"", fn, key))
+            stack.append((root_upath, fn, key))
 
         # Walk the tree
         while stack:
@@ -134,7 +138,7 @@ class CacheDB(object):
             except (IOError, OSError, ValueError):
                 continue
 
-            alive_files.append((os.path.basename(fn), upath))
+            yield (os.path.basename(fn), upath)
 
             for c_fn, c_info in children:
                 c_upath = os.path.join(upath, c_fn)
@@ -145,9 +149,17 @@ class CacheDB(object):
                 elif c_info[0] == u'filenode':
                     for ext in (None, b'state', b'data'):
                         c_fn, c_key = self.get_filename_and_key(c_upath, ext=ext)
-                        alive_files.append((os.path.basename(c_fn), c_upath))
+                        yield (os.path.basename(c_fn), c_upath)
 
-        alive_file_set = set(x[0] for x in alive_files)
+    def _cleanup(self):
+        """
+        Walk through the cached directory tree, and remove files not
+        reachable from the root.
+        """
+        alive_file_set = set()
+        for fn, upath in self._walk_cache_subtree():
+            alive_file_set.add(fn)
+
         for basename in os.listdir(self.path):
             if basename == 'salt':
                 continue
@@ -181,16 +193,26 @@ class CacheDB(object):
                 else:
                     tot_size += st.st_size
 
-    def invalidate(self):
-        with self.lock:
-            for basename in os.listdir(self.path):
-                if basename == 'salt':
-                    continue
-                fn = os.path.join(self.path, basename)
-                if os.path.isfile(fn):
-                    os.unlink(fn)
-
+    def _invalidate(self, root_upath=u""):
+        if root_upath == u"":
             self.open_items = {}
+            dead_file_set = None
+        else:
+            dead_file_set = set()
+            for fn, upath in self._walk_cache_subtree(root_upath):
+                self.open_items.pop(upath, None)
+                dead_file_set.add(fn)
+
+        for basename in os.listdir(self.path):
+            if basename == 'salt':
+                continue
+            fn = os.path.join(self.path, basename)
+            if os.path.isfile(fn) and (dead_file_set is None or basename in dead_file_set):
+                os.unlink(fn)
+
+    def invalidate(self, root_upath=u""):
+        with self.lock:
+            self._invalidate(root_upath)
 
     def open_file(self, upath, io, flags):
         with self.lock:

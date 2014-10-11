@@ -9,10 +9,6 @@ It is designed for static, unchanging data, and caches file and
 directory metadata aggressively. Optionally, also file data can be
 cached.
 
-The cache is never invalidated automatically, and the files and
-directories stored are assumed to never change. The cache can be
-invalidated manually, via ``touch <mountpoint>/.tahoestaticfs-invalidate``.
-
 .. _Tahoe-LAFS: http://tahoe-lafs.org/
 
 Usage
@@ -62,10 +58,23 @@ For example::
    from your Tahoe-LAFS aliases file as shown above.
 
 
-Encrypted cache
----------------
+Caching
+-------
 
-Tahoestaticfs caches data and metadata retrieved from network on disk.
+On read access, the cache is never invalidated automatically, and the
+files and directories stored are assumed to never change.
+
+The cache can be invalidated manually, via ``touch
+<mountpoint>/.tahoestaticfs-invalidate``. To invalidate only the cache
+of a subtree, do ``touch
+<mountpoint>/<somedir>/.tahoestaticfs-invalidate``.
+
+
+Encryption
+----------
+
+Tahoestaticfs encrypts cached data and metadata retrieved from network
+before storing it on disk.
 
 The purpose of the encryption is to hinder an attacker who, (i) has
 read-only access to the cache files, and (ii) attempts to determine
