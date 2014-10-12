@@ -675,7 +675,7 @@ class CachedFileInode(object):
                 self.block_cache.close()
                 self.f.close()
 
-                if not self.persistent:
+                if not self.persistent and self.upath is not None:
                     os.unlink(self.f_state.path)
                     os.unlink(self.f_data.path)
             self.closed = True
@@ -819,8 +819,8 @@ class CachedFileInode(object):
         with self.lock:
             if self.upath is not None:
                 os.unlink(self.f.path)
-                os.unlink(self.f_state)
-                os.unlink(self.f_data)
+                os.unlink(self.f_state.path)
+                os.unlink(self.f_data.path)
             self.upath = None
 
 
