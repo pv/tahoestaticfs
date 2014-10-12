@@ -197,7 +197,7 @@ class CacheDB(object):
     def _invalidate(self, root_upath=u"", shallow=False):
         if root_upath == u"" and not shallow:
             for f in self.open_items.itervalues():
-                f.unlink
+                f.invalidated = True
             self.open_items = {}
             dead_file_set = os.listdir(self.path)
         else:
@@ -205,7 +205,7 @@ class CacheDB(object):
             for fn, upath in self._walk_cache_subtree(root_upath):
                 f = self.open_items.pop(upath, None)
                 if f is not None:
-                    f.unlink()
+                    f.invalidated = True
                 dead_file_set.add(fn)
                 if shallow and upath != root_upath:
                     break
@@ -570,6 +570,7 @@ class CachedFileInode(object):
         self.closed = False
         self.refcnt = 0
         self.persistent = persistent
+        self.invalidated = False
 
         # Use per-file keys for different files, for safer fallback
         # in the extremely unlikely event of SHA512 hash collisions
@@ -681,7 +682,7 @@ class CachedFileInode(object):
                 self.block_cache.close()
                 self.f.close()
 
-                if not self.persistent and self.upath is not None:
+                if not self.persistent and self.upath is not None and not self.invalidated:
                     os.unlink(self.f_state.path)
                     os.unlink(self.f_data.path)
             self.closed = True
@@ -823,7 +824,7 @@ class CachedFileInode(object):
 
     def unlink(self):
         with self.lock:
-            if self.upath is not None:
+            if self.upath is not None and not self.invalidated:
                 os.unlink(self.f.path)
                 os.unlink(self.f_state.path)
                 os.unlink(self.f_data.path)
@@ -841,6 +842,7 @@ class CachedDirInode(object):
         self.closed = False
         self.refcnt = 0
         self.lock = threading.RLock()
+        self.invalidated = False
 
         filename, key = cachedb.get_filename_and_key(upath)
         try:
@@ -909,7 +911,7 @@ class CachedDirInode(object):
             raise IOError(errno.ENOENT, "invalid entry")
 
     def unlink(self):
-        if self.upath is not None:
+        if self.upath is not None and not self.invalidated:
             os.unlink(self.filename)
         self.upath = None
 
