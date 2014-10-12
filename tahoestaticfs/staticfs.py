@@ -53,8 +53,8 @@ class TahoeStaticFS(fuse.Fuse):
         self.parser.add_option('-S', '--cache-size', dest='cache_size', help="Target cache size", default="1GB")
         self.parser.add_option('-w', '--write-cache-lifetime', dest='write_lifetime', default='10',
                                help="Cache lifetime for write operations (seconds). Default: 10 sec")
-        self.parser.add_option('-r', '--read-cache-lifetime', dest='read_lifetime', default='inf',
-                               help="Cache lifetime for read operations (seconds). Default: infinite")
+        self.parser.add_option('-r', '--read-cache-lifetime', dest='read_lifetime', default='10',
+                               help="Cache lifetime for read operations (seconds). Default: 10 sec")
 
     def main(self, args=None):
         if not self.fuse_args.mount_expected():
