@@ -50,11 +50,11 @@ class TahoeConnection(object):
     def _url(self, path, params={}, iscap=False):
         assert isinstance(path, unicode), path
 
+        path = path.encode('utf-8')
+        path = quote(path).lstrip(b'/')
         if iscap:
-            path = self.base_url + b'/' + path.encode('ascii')
+            path = self.base_url + b'/' + path
         else:
-            path = path.encode('utf-8')
-            path = quote(path).lstrip(b'/')
             path = self.base_url + b'/' + self.rootcap + b'/' + path
 
         if params:
@@ -121,8 +121,8 @@ class TahoeConnection(object):
     def get_content(self, path, offset=None, length=None, iscap=False):
         return self._get(path, offset=offset, length=length, iscap=iscap)
 
-    def put_file(self, path, f):
-        f = self._put(path, data=f)
+    def put_file(self, path, f, iscap=False):
+        f = self._put(path, data=f, iscap=iscap)
         try:
             return f.read()
         finally:
@@ -135,8 +135,8 @@ class TahoeConnection(object):
         finally:
             f.close()
 
-    def mkdir(self, path):
-        f = self._post(path, params={u't': u'mkdir'})
+    def mkdir(self, path, iscap=False):
+        f = self._post(path, params={u't': u'mkdir'}, iscap=iscap)
         try:
             return f.read()
         finally:

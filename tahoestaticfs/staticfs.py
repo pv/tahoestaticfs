@@ -37,7 +37,7 @@ def ioerrwrap(func):
                                  traceback.format_exc(),
                                  "-"*80])
                 logging.warning(msg)
-            raise
+            return -errno.EIO
 
     wrapper.__name__ = func.__name__
     wrapper.__doc__ = func.__doc__
