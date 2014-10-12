@@ -2,8 +2,8 @@
 tahoestaticfs
 =============
 
-Tahoestaticfs is a Fuse filesystem that enables read-only access to
-an unchanging tree of files stored on a Tahoe-LAFS_ grid.
+Tahoestaticfs is a Fuse filesystem that enables read and write access
+to files stored on a Tahoe-LAFS_ grid.
 
 It is designed for static, unchanging data, and caches file and
 directory metadata aggressively. Optionally, also file data can be
@@ -41,6 +41,12 @@ Usage
         -D, --cache-data       Cache also file data
         -S CACHE_SIZE, --cache-size=CACHE_SIZE
                                Target cache size
+        -w WRITE_LIFETIME, --write-cache-lifetime=WRITE_LIFETIME
+                               Cache lifetime for write operations (seconds).
+                               Default: 10 sec
+        -r READ_LIFETIME, --read-cache-lifetime=READ_LIFETIME
+                               Cache lifetime for read operations (seconds).
+                               Default: infinite
 
 For example::
 
@@ -58,11 +64,28 @@ For example::
    from your Tahoe-LAFS aliases file as shown above.
 
 
-Caching
--------
+Caching and concurrency
+-----------------------
 
-On read access, the cache is never invalidated automatically, and the
-files and directories stored are assumed to never change.
+Cached data and metadata becomes invalidated if it is older than the
+corresponding cache lifetimes.  The cache lifetimes can be specified
+separately for metadata/data read and write operations.
+
+The cache will stay in a consistent state with the Tahoe grid if
+modifications to the data are only performed via a single mounted
+filesystem, even if the cache lifetimes are infinite.
+
+If modifications are done directly to files on the grid e.g. from
+other machines accessing the Tahoe storage, Tahoestaticfs filesystem
+will reflect the state of the files in Tahoe storage only after
+waiting one cache lifetime after the last modification.
+
+Note that this is not an absolute guarantee, as Tahoe-LAFS itself does
+`not guarantee full concurrency
+<https://tahoe-lafs.org/trac/tahoe-lafs/browser/docs/frontends/webapi.rst#concurrency-issues>`__.
+
+Nonzero cache lifetimes are in general necessary to obtain filesystem
+metadata performance necessary for typical workloads.
 
 The cache can be invalidated manually, via ``touch
 <mountpoint>/.tahoestaticfs-invalidate``. To invalidate only the cache
