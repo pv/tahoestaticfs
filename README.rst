@@ -5,11 +5,19 @@ tahoestaticfs
 Tahoestaticfs is a Fuse filesystem that enables read and write access
 to files stored on a Tahoe-LAFS_ grid.
 
-It is designed for static, unchanging data, and caches file and
-directory metadata aggressively. Optionally, also file data can be
+Tahoestaticfs is designed for static, unchanging data, and caches file
+and directory metadata aggressively. Optionally, also file data can be
 cached.
 
+Compared to mounting Tahoe-LAFS directories via sshfs (as of
+Tahoe-LAFS 1.9.2), Tahoestaticfs achieves better latency. This is true
+also for accessing data not in cache (e.g. ``ls -laR /mnt/tahoe`` with
+cold cache), due to the more aggressive directory metadata caching.
+Moreover, tahoestaticfs also supports random access reads to stored
+files, without requiring to download the full files.
+
 .. _Tahoe-LAFS: http://tahoe-lafs.org/
+
 
 Usage
 -----
