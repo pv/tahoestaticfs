@@ -1,6 +1,6 @@
 """tahoestaticfs [options] [mountpoint]
 
-Tahoe-LAFS directory mounted as a read-only file system, with local
+Tahoe-LAFS directory mounted as a filesystem, with local
 caching. Cached data is encrypted with a key derived from the
 directory capability mounted.
 
