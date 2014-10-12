@@ -123,12 +123,17 @@ class TahoeStaticFS(fuse.Fuse):
         basename = os.path.basename(upath)
         if basename == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
             self.cache.invalidate(os.path.dirname(upath))
+            return -errno.EACCES
         return self.cache.open_file(upath, self.io, flags)
 
     @ioerrwrap
     def release(self, path, flags, f):
-        self.cache.close_file(f)
-        return 0
+        upath = self.cache.get_upath(path)
+        try:
+            self.cache.upload_file(f, self.io)
+            return 0
+        finally:
+            self.cache.close_file(f)
 
     @ioerrwrap
     def read(self, path, size, offset, f):
@@ -137,11 +142,31 @@ class TahoeStaticFS(fuse.Fuse):
 
     @ioerrwrap
     def create(self, path, flags, mode):
+        # no support for mode in Tahoe, so discard it
+        return self.open(path, flags)
+ 
+    @ioerrwrap
+    def write(self, path, data, offset, f):
         upath = self.cache.get_upath(path)
-        basename = os.path.basename(upath)
-        if basename == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
-            self.cache.invalidate(os.path.dirname(upath))
-        return -errno.EACCES
+        f.write(self.io, offset, data)
+        return len(data)
+
+    @ioerrwrap
+    def ftruncate(self, path, size, f):
+        f.truncate(size)
+        return 0
+
+    @ioerrwrap
+    def truncate(self, path, size):
+        upath = self.cache.get_upath(path)
+
+        f = self.cache.open_file(upath, self.io, os.O_RDWR)
+        try:
+            f.truncate(size)
+            self.cache.upload_file(f, self.io)
+        finally:
+            self.cache.close_file(f)
+        return 0
 
     # -- Handleless ops
 
@@ -149,19 +174,7 @@ class TahoeStaticFS(fuse.Fuse):
     def getattr(self, path):
         upath = self.cache.get_upath(path)
 
-        if upath == u'':
-            dir = self.cache.open_dir(upath, self.io)
-            try:
-                info = dir.get_attr()
-            finally:
-                self.cache.close_dir(dir)
-        else:
-            upath_parent = self.cache.get_upath_parent(path)
-            dir = self.cache.open_dir(upath_parent, self.io)
-            try:
-                info = dir.get_child_attr(os.path.basename(upath))
-            finally:
-                self.cache.close_dir(dir)
+        info = self.cache.get_attr(upath, self.io)
 
         if info['type'] == 'dir':
             st = fuse.Stat()
