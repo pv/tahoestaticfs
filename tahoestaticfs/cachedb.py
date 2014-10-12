@@ -844,8 +844,7 @@ class CachedFileInode(object):
             self.lock.release()
 
     def get_size(self):
-        with self.lock:
-            return self.block_cache.get_size()
+        return self.block_cache.get_size()
 
     def get_attr(self):
         return dict(type='file', size=self.get_size())
