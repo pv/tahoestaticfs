@@ -196,21 +196,25 @@ class CacheDB(object):
 
     def _invalidate(self, root_upath=u"", shallow=False):
         if root_upath == u"" and not shallow:
+            for f in self.open_items.itervalues():
+                f.unlink
             self.open_items = {}
-            dead_file_set = None
+            dead_file_set = os.listdir(self.path)
         else:
             dead_file_set = set()
             for fn, upath in self._walk_cache_subtree(root_upath):
-                self.open_items.pop(upath, None)
+                f = self.open_items.pop(upath, None)
+                if f is not None:
+                    f.unlink()
                 dead_file_set.add(fn)
-                if shallow:
+                if shallow and upath != root_upath:
                     break
 
-        for basename in os.listdir(self.path):
+        for basename in dead_file_set:
             if basename == 'salt':
                 continue
             fn = os.path.join(self.path, basename)
-            if os.path.isfile(fn) and (dead_file_set is None or basename in dead_file_set):
+            if os.path.isfile(fn):
                 os.unlink(fn)
 
     def invalidate(self, root_upath=u"", shallow=False):
