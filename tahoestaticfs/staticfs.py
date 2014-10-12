@@ -51,9 +51,9 @@ class TahoeStaticFS(fuse.Fuse):
         self.parser.add_option('-u', '--node-url', dest='node_url', help="Tahoe gateway node URL")
         self.parser.add_option('-D', '--cache-data', dest='cache_data', action="store_true", help="Cache also file data")
         self.parser.add_option('-S', '--cache-size', dest='cache_size', help="Target cache size", default="1GB")
-        self.parser.add_option('-w', '--write-cache-lifetime', dest='write_lifetime', type=int, default=10,
+        self.parser.add_option('-w', '--write-cache-lifetime', dest='write_lifetime', default='10',
                                help="Cache lifetime for write operations (seconds). Default: 10 sec")
-        self.parser.add_option('-r', '--read-cache-lifetime', dest='read_lifetime', type=int, default=100*365*60*60,
+        self.parser.add_option('-r', '--read-cache-lifetime', dest='read_lifetime', default='inf',
                                help="Cache lifetime for read operations (seconds). Default: infinite")
 
     def main(self, args=None):
@@ -91,11 +91,21 @@ class TahoeStaticFS(fuse.Fuse):
         except ValueError:
             print("error: --cache-size %r is not a valid size specifier" % (options.cache_size,))
 
+        try:
+            read_lifetime = parse_lifetime(options.read_lifetime)
+        except ValueError:
+            print("error: --read-cache-lifetime %r is not a valid lifetime" % (options.read_lifetime,))
+
+        try:
+            write_lifetime = parse_lifetime(options.write_lifetime)
+        except ValueError:
+            print("error: --write-cache-lifetime %r is not a valid lifetime" % (options.write_lifetime,))
+
         self.cache = CacheDB(options.cache, rootcap, node_url,
                              cache_size=cache_size, 
                              cache_data=options.cache_data,
-                             read_lifetime=options.read_lifetime,
-                             write_lifetime=options.write_lifetime)
+                             read_lifetime=read_lifetime,
+                             write_lifetime=write_lifetime)
         self.io = TahoeConnection(node_url, rootcap)
 
         fuse.Fuse.main(self, args)
@@ -249,3 +259,13 @@ def parse_size(size_str):
             raise ValueError("invalid size multiplier")
 
     return size
+
+
+def parse_lifetime(lifetime_str):
+    if lifetime_str.lower() in ('inf', 'infinity', 'infinite'):
+        return 100*365*24*60*60
+
+    try:
+        return int(lifetime_str)
+    except ValueError:
+        raise ValueError("invalid lifetime specifier")
