@@ -237,7 +237,7 @@ class CacheDB(object):
 
     def close_file(self, f):
         with self.lock:
-            c = f.cached_file
+            c = f.inode
             upath = f.upath
             f.close()
             if c.closed:
@@ -246,7 +246,7 @@ class CacheDB(object):
 
     def close_dir(self, f):
         with self.lock:
-            c = f.cached_dir
+            c = f.inode
             upath = f.upath
             f.close()
             if c.closed:
@@ -254,22 +254,29 @@ class CacheDB(object):
                 self._restrict_size()
 
     def upload_file(self, f, io):
-        c = f.cached_file
+        c = f.inode
         if c.upath is not None and c.dirty:
             c.upload(io)
             self.invalidate(udirname(c.upath), shallow=True)
 
-    def unlink(self, upath, io):
+    def unlink(self, upath, io, is_dir=False):
         if upath == u'':
             raise IOError(errno.EACCES, "cannot unlink root directory")
 
         with self.lock:
             # Invalidate cache
-            if upath in self.open_items:
-                self.open_items[upath].unlink()
-                del self.open_items[upath]
+            if is_dir:
+                f = self.open_dir(upath, io)
             else:
-                self.invalidate(upath)
+                f = self.open_file(upath, io, 0)
+            try:
+                f.inode.unlink()
+            finally:
+                if is_dir:
+                    self.close_dir(f)
+                else:
+                    self.close_file(f)
+
             self.invalidate(udirname(upath), shallow=True)
 
             # Perform unlink
@@ -406,9 +413,9 @@ class CachedFileHandle(object):
     direct_io = False
     keep_cache = False
 
-    def __init__(self, upath, cached_file, flags):
-        self.cached_file = cached_file
-        self.cached_file.incref()
+    def __init__(self, upath, inode, flags):
+        self.inode = inode
+        self.inode.incref()
         self.lock = threading.RLock()
         self.flags = flags
         self.upath = upath
@@ -435,45 +442,45 @@ class CachedFileHandle(object):
             raise IOError(errno.EINVAL, "O_EXCL without writeable file")
 
         if (self.flags & os.O_TRUNC):
-            self.cached_file.truncate(0)
+            self.inode.truncate(0)
 
     def close(self):
         with self.lock:
-            if self.cached_file is None:
+            if self.inode is None:
                 raise IOError(errno.EBADF, "Operation on a closed file")
-            c = self.cached_file
-            self.cached_file = None
+            c = self.inode
+            self.inode = None
             c.decref()
 
     def read(self, io, offset, length):
         with self.lock:
-            if self.cached_file is None:
+            if self.inode is None:
                 raise IOError(errno.EBADF, "Operation on a closed file")
             if not self.readable:
                 raise IOError(errno.EBADF, "File not readable")
-            return self.cached_file.read(io, offset, length)
+            return self.inode.read(io, offset, length)
 
     def get_size(self):
         with self.lock:
-            return self.cached_file.get_size()
+            return self.inode.get_size()
 
     def write(self, io, offset, data):
         with self.lock:
-            if self.cached_file is None:
-                raise IOError(errno.EINVAL, "Operation on a closed file")
+            if self.inode is None:
+                raise IOError(errno.EBADF, "Operation on a closed file")
             if not self.writeable:
-                raise IOError(errno.EINVAL, "File not writeable")
+                raise IOError(errno.EBADF, "File not writeable")
             if self.append:
                 offset = None
-            return self.cached_file.write(io, offset, data)
+            return self.inode.write(io, offset, data)
 
     def truncate(self, size):
         with self.lock:
-            if self.cached_file is None:
-                raise IOError(errno.EINVAL, "Operation on a closed file")
+            if self.inode is None:
+                raise IOError(errno.EBADF, "Operation on a closed file")
             if not self.writeable:
-                raise IOError(errno.EINVAL, "File not writeable")
-            return self.cached_file.truncate(size)
+                raise IOError(errno.EBADF, "File not writeable")
+            return self.inode.truncate(size)
 
 
 class CachedDirHandle(object):
@@ -481,37 +488,37 @@ class CachedDirHandle(object):
     Logical directory handle.
     """
 
-    def __init__(self, upath, cached_dir):
-        self.cached_dir = cached_dir
-        self.cached_dir.incref()
+    def __init__(self, upath, inode):
+        self.inode = inode
+        self.inode.incref()
         self.lock = threading.RLock()
         self.upath = upath
 
     def close(self):
         with self.lock:
-            if self.cached_dir is None:
+            if self.inode is None:
                 raise IOError(errno.EBADF, "Operation on a closed dir")
-            c = self.cached_dir
-            self.cached_dir = None
+            c = self.inode
+            self.inode = None
             c.decref()
 
     def listdir(self):
         with self.lock:
-            if self.cached_dir is None:
+            if self.inode is None:
                 raise IOError(errno.EBADF, "Operation on a closed dir")
-            return self.cached_dir.listdir()
+            return self.inode.listdir()
 
     def get_attr(self):
         with self.lock:
-            if self.cached_dir is None:
+            if self.inode is None:
                 raise IOError(errno.EBADF, "Operation on a closed dir")
-            return self.cached_dir.get_attr()
+            return self.inode.get_attr()
 
     def get_child_attr(self, childname):
         with self.lock:
-            if self.cached_dir is None:
+            if self.inode is None:
                 raise IOError(errno.EBADF, "Operation on a closed dir")
-            return self.cached_dir.get_child_attr(childname)
+            return self.inode.get_child_attr(childname)
 
 
 class CachedFileInode(object):
@@ -802,6 +809,7 @@ class CachedDirInode(object):
         try:
             with CryptFile(filename, key=key, mode='rb') as f:
                 self.info = json_zlib_load(f)
+            self.filename = filename
             os.utime(filename, None)
             return
         except (IOError, OSError, ValueError):
