@@ -39,14 +39,14 @@ class TahoeConnection(object):
         semaphore = self.put_semaphore if is_put else self.get_semaphore
 
         semaphore.acquire()
-        with self.lock:
-            try:
-                response = TahoeResponse(self, req, is_put)
-            except:
-                semaphore.release()
-                raise
-            self.connections.append(response)
-            return response
+        try:
+            response = TahoeResponse(self, req, is_put)
+            with self.lock:
+                self.connections.append(response)
+                return response
+        except:
+            semaphore.release()
+            raise
 
     def _release_response(self, response, is_put):
         semaphore = self.put_semaphore if is_put else self.get_semaphore
