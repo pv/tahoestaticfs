@@ -46,7 +46,7 @@ Usage
                                Default: 10 sec
         -r READ_LIFETIME, --read-cache-lifetime=READ_LIFETIME
                                Cache lifetime for read operations (seconds).
-                               Default: infinite
+                               Default: 10 sec
 
 For example::
 
