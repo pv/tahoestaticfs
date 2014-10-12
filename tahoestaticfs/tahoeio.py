@@ -5,16 +5,17 @@ import shutil
 
 
 class TahoeResponse(object):
-    def __init__(self, connection, req):
+    def __init__(self, connection, req, is_put):
         self.connection = connection
         self.response = urlopen(req)
+        self.is_put = is_put
 
     def read(self, size=None):
         return self.response.read(size)
 
     def close(self):
         self.response.close()
-        self.connection._release_response(self)
+        self.connection._release_response(self, self.is_put)
 
 
 class TahoeConnection(object):
@@ -28,23 +29,31 @@ class TahoeConnection(object):
         self.connections = []
         self.lock = threading.Lock()
 
-        self.semaphore = threading.Semaphore(max_connections)
+        put_conns = max(1, max_connections//2)
+        get_conns = max(1, max_connections - put_conns)
 
-    def _get_response(self, req):
-        self.semaphore.acquire()
+        self.get_semaphore = threading.Semaphore(get_conns)
+        self.put_semaphore = threading.Semaphore(put_conns)
+
+    def _get_response(self, req, is_put):
+        semaphore = self.put_semaphore if is_put else self.get_semaphore
+
+        semaphore.acquire()
         with self.lock:
             try:
-                response = TahoeResponse(self, req)
+                response = TahoeResponse(self, req, is_put)
             except:
-                self.semaphore.release()
+                semaphore.release()
                 raise
             self.connections.append(response)
             return response
 
-    def _release_response(self, response):
+    def _release_response(self, response, is_put):
+        semaphore = self.put_semaphore if is_put else self.get_semaphore
+
         with self.lock:
             if response in self.connections:
-                self.semaphore.release()
+                semaphore.release()
                 self.connections.remove(response)
 
     def _url(self, path, params={}, iscap=False):
@@ -96,19 +105,19 @@ class TahoeConnection(object):
 
     def _get(self, path, params={}, offset=None, length=None, iscap=False):
         req = self._get_request("GET", path, params=params, offset=offset, length=length, iscap=iscap)
-        return self._get_response(req)
+        return self._get_response(req, False)
 
     def _post(self, path, data=None, params={}, iscap=False):
         req = self._get_request("POST", path, data=data, params=params, iscap=iscap)
-        return self._get_response(req)
+        return self._get_response(req, False)
 
     def _put(self, path, data=None, params={}, iscap=False):
         req = self._get_request("PUT", path, data=data, params=params, iscap=iscap)
-        return self._get_response(req)
+        return self._get_response(req, True)
 
     def _delete(self, path, params={}, iscap=False):
         req = self._get_request("DELETE", path, params=params, iscap=iscap)
-        return self._get_response(req)
+        return self._get_response(req, False)
 
     def get_info(self, path, iscap=False):
         f = self._get(path, {u't': u'json'}, iscap=iscap)
