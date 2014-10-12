@@ -56,6 +56,11 @@ class TahoeConnection(object):
                 semaphore.release()
                 self.connections.remove(response)
 
+    def wait_until_write_allowed(self):
+        # Force wait if put queue is full
+        self.put_semaphore.acquire()
+        self.put_semaphore.release()
+
     def _url(self, path, params={}, iscap=False):
         assert isinstance(path, unicode), path
 

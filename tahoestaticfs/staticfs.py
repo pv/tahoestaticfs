@@ -164,6 +164,7 @@ class TahoeStaticFS(fuse.Fuse):
     @ioerrwrap
     def write(self, path, data, offset, f):
         upath = self.cache.get_upath(path)
+        self.io.wait_until_write_allowed()
         f.write(self.io, offset, data)
         return len(data)
 
