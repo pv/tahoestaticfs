@@ -304,19 +304,22 @@ class CacheDB(object):
                     self.close_file(f)
 
             # Perform unlink
+            parent = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
             try:
-                cap = io.delete(upath)
-            except HTTPError, err:
-                if err.code == 404:
-                    raise IOError(errno.ENOENT, "no such file")
-                raise IOError(errno.EREMOTEIO, "failed to retrieve information")
+                parent_cap = parent.inode.info[1][u'rw_uri']
 
-            # Remove from cache
-            f = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
-            try:
-                f.inode.cache_remove_child(ubasename(upath))
+                upath_cap = parent_cap + u'/' + ubasename(upath)
+                try:
+                    cap = io.delete(upath_cap, iscap=True)
+                except HTTPError, err:
+                    if err.code == 404:
+                        raise IOError(errno.ENOENT, "no such file")
+                    raise IOError(errno.EREMOTEIO, "failed to retrieve information")
+
+                # Remove from cache
+                parent.inode.cache_remove_child(ubasename(upath))
             finally:
-                self.close_dir(f)
+                self.close_dir(parent)
 
     def mkdir(self, upath, io):
         if upath == u'':
@@ -343,9 +346,9 @@ class CacheDB(object):
                 self.invalidate(upath)
 
                 # Perform operation
-                upath = parent_cap + u'/' + ubasename(upath)
+                upath_cap = parent_cap + u'/' + ubasename(upath)
                 try:
-                    cap = io.mkdir(upath, iscap=True)
+                    cap = io.mkdir(upath_cap, iscap=True)
                 except HTTPError, err:
                     raise IOError(err.EREMOTEIO, "remote operation failed")
 
