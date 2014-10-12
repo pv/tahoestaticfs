@@ -51,6 +51,10 @@ class TahoeStaticFS(fuse.Fuse):
         self.parser.add_option('-u', '--node-url', dest='node_url', help="Tahoe gateway node URL")
         self.parser.add_option('-D', '--cache-data', dest='cache_data', action="store_true", help="Cache also file data")
         self.parser.add_option('-S', '--cache-size', dest='cache_size', help="Target cache size", default="1GB")
+        self.parser.add_option('-w', '--write-cache-lifetime', dest='write_lifetime', type=int, default=10,
+                               help="Cache lifetime for write operations (seconds). Default: 10 sec")
+        self.parser.add_option('-r', '--read-cache-lifetime', dest='read_lifetime', type=int, default=100*365*60*60,
+                               help="Cache lifetime for read operations (seconds). Default: infinite")
 
     def main(self, args=None):
         if not self.fuse_args.mount_expected():
@@ -89,7 +93,9 @@ class TahoeStaticFS(fuse.Fuse):
 
         self.cache = CacheDB(options.cache, rootcap, node_url,
                              cache_size=cache_size, 
-                             cache_data=options.cache_data)
+                             cache_data=options.cache_data,
+                             read_lifetime=options.read_lifetime,
+                             write_lifetime=options.write_lifetime)
         self.io = TahoeConnection(node_url, rootcap)
 
         fuse.Fuse.main(self, args)

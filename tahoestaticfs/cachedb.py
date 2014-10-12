@@ -21,7 +21,8 @@ from tahoestaticfs.blockcache import BlockCachedFile
 
 
 class CacheDB(object):
-    def __init__(self, path, rootcap, node_url, cache_size, cache_data):
+    def __init__(self, path, rootcap, node_url, cache_size, cache_data,
+                 read_lifetime, write_lifetime):
         path = os.path.abspath(path)
         if not os.path.isdir(path):
             raise IOError(errno.ENOENT, "Cache directory is not an existing directory")
@@ -30,6 +31,8 @@ class CacheDB(object):
 
         self.cache_size = cache_size
         self.cache_data = cache_data
+        self.read_lifetime = read_lifetime
+        self.write_lifetime = write_lifetime
 
         self.path = path
         self.prk = self._generate_prk(rootcap)
@@ -221,7 +224,7 @@ class CacheDB(object):
         with self.lock:
             self._invalidate(root_upath, shallow=shallow)
 
-    def open_file(self, upath, io, flags):
+    def open_file(self, upath, io, flags, lifetime=None):
         with self.lock:
             writeable = (flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_WRONLY)
             if writeable:
@@ -229,14 +232,19 @@ class CacheDB(object):
                 if upath not in self.open_items:
                     self.invalidate(upath)
 
+                # Limit e.g. parent directory lookup lifetime
+                if lifetime is None:
+                    lifetime = self.write_lifetime
+
             f = self.get_file_inode(upath, io,
                                     excl=(flags & os.O_EXCL),
-                                    creat=(flags & os.O_CREAT))
+                                    creat=(flags & os.O_CREAT),
+                                    lifetime=lifetime)
             return CachedFileHandle(upath, f, flags)
 
-    def open_dir(self, upath, io):
+    def open_dir(self, upath, io, lifetime=None):
         with self.lock:
-            f = self.get_dir_inode(upath, io)
+            f = self.get_dir_inode(upath, io, lifetime=lifetime)
             return CachedDirHandle(upath, f)
 
     def close_file(self, f):
@@ -264,7 +272,8 @@ class CacheDB(object):
             c = c.inode
 
         if c.upath is not None and c.dirty:
-            parent_cap = self._lookup_cap(udirname(c.upath), io, read_only=False)
+            parent_cap = self._lookup_cap(udirname(c.upath), io, read_only=False, 
+                                          lifetime=self.write_lifetime)
             c.upload(io, parent_cap=parent_cap)
             self.invalidate(udirname(c.upath), shallow=True)
 
@@ -275,9 +284,9 @@ class CacheDB(object):
         with self.lock:
             # Invalidate cache
             if is_dir:
-                f = self.open_dir(upath, io)
+                f = self.open_dir(upath, io, lifetime=self.write_lifetime)
             else:
-                f = self.open_file(upath, io, 0)
+                f = self.open_file(upath, io, 0, lifetime=self.write_lifetime)
             try:
                 f.inode.unlink()
             finally:
@@ -302,13 +311,13 @@ class CacheDB(object):
 
         with self.lock:
             # Check that parent exists
-            f = self.open_dir(udirname(upath), io)
+            f = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
             parent_cap = f.inode.info[1][u'rw_uri']
             self.close_dir(f)
 
             # Check that the target does not exist
             try:
-                f = self.open_dir(upath, io)
+                f = self.open_dir(upath, io, lifetime=self.write_lifetime)
             except IOError, err:
                 if err.errno == errno.ENOENT:
                     pass
@@ -360,19 +369,17 @@ class CacheDB(object):
 
             return info
 
-    def _lookup_cap(self, upath, io, read_only=True):
+    def _lookup_cap(self, upath, io, read_only=True, lifetime=None):
+        if lifetime is None:
+            lifetime = self.read_lifetime
+
         with self.lock:
-            if upath in self.open_items:
+            if upath in self.open_items and self.open_items[upath].is_fresh(lifetime):
                 # shortcut
-                try:
-                    if read_only:
-                        return self.open_items[upath].info[1][u'ro_uri']
-                    else:
-                        return self.open_items[upath].info[1][u'rw_uri']
-                except:
-                    print upath
-                    print self.open_items[upath].info[1]
-                    raise
+                if read_only:
+                    return self.open_items[upath].info[1][u'ro_uri']
+                else:
+                    return self.open_items[upath].info[1][u'rw_uri']
             elif upath == u'':
                 # root
                 return None
@@ -381,7 +388,7 @@ class CacheDB(object):
                 entry_name = ubasename(upath)
                 parent_upath = udirname(upath)
 
-                parent = self.open_dir(parent_upath, io)
+                parent = self.open_dir(parent_upath, io, lifetime=lifetime)
                 try:
                     if read_only:
                         return parent.get_child_attr(entry_name)['ro_uri']
@@ -390,12 +397,20 @@ class CacheDB(object):
                 finally:
                     self.close_dir(parent)
 
-    def get_file_inode(self, upath, io, excl=False, creat=False):
+    def get_file_inode(self, upath, io, excl=False, creat=False, lifetime=None):
+        if lifetime is None:
+            lifetime = self.read_lifetime
+
         with self.lock:
             f = self.open_items.get(upath)
+
+            if f is not None and not f.is_fresh(lifetime):
+                f = None
+                self.invalidate(upath, shallow=True)
+
             if f is None:
                 try:
-                    cap = self._lookup_cap(upath, io)
+                    cap = self._lookup_cap(upath, io, lifetime=lifetime)
                 except IOError, err:
                     if err.errno == errno.ENOENT and creat:
                         cap = None
@@ -418,11 +433,19 @@ class CacheDB(object):
                     raise IOError(errno.EISDIR, "item is a directory")
                 return f
 
-    def get_dir_inode(self, upath, io):
+    def get_dir_inode(self, upath, io, lifetime=None):
+        if lifetime is None:
+            lifetime = self.read_lifetime
+
         with self.lock:
             f = self.open_items.get(upath)
+
+            if f is not None and not f.is_fresh(lifetime):
+                f = None
+                self.invalidate(upath, shallow=True)
+
             if f is None:
-                cap = self._lookup_cap(upath, io, read_only=False)
+                cap = self._lookup_cap(upath, io, read_only=False, lifetime=lifetime)
                 f = CachedDirInode(self, upath, io, dircap=cap)
                 self.open_items[upath] = f
 
@@ -678,7 +701,14 @@ class CachedFileInode(object):
             raise IOError(errno.EREMOTEIO, "failed to retrieve information")
         self.f.truncate(0)
         self.f.seek(0)
+        if u'retrieved' not in self.info[1]:
+            self.info[1][u'retrieved'] = time.time()
         json_zlib_dump(self.info, self.f)
+
+    def is_fresh(self, lifetime):
+        if u'retrieved' not in self.info[1]:
+            return True
+        return (self.info[1][u'retrieved'] + lifetime >= time.time())
 
     def incref(self):
         with self.lock:
@@ -889,6 +919,7 @@ class CachedDirInode(object):
                 self.info = io.get_info(dircap, iscap=True)
             else:
                 self.info = io.get_info(upath)
+            self.info[1][u'retrieved'] = time.time()
             json_zlib_dump(self.info, f)
         except (HTTPError, ValueError):
             os.unlink(filename)
@@ -897,6 +928,9 @@ class CachedDirInode(object):
             f.close()
 
         self.filename = filename
+
+    def is_fresh(self, lifetime):
+        return (self.info[1][u'retrieved'] + lifetime >= time.time())
 
     def incref(self):
         with self.lock:
