@@ -124,20 +124,20 @@ class TahoeConnection(object):
     def put_file(self, path, f, iscap=False):
         f = self._put(path, data=f, iscap=iscap)
         try:
-            return f.read()
+            return f.read().decode('utf-8').strip()
         finally:
             f.close()
 
     def delete(self, path, iscap=False):
         f = self._delete(path, iscap=iscap)
         try:
-            return f.read()
+            return f.read().decode('utf-8').strip()
         finally:
             f.close()
 
     def mkdir(self, path, iscap=False):
         f = self._post(path, params={u't': u'mkdir'}, iscap=iscap)
         try:
-            return f.read()
+            return f.read().decode('utf-8').strip()
         finally:
             f.close()

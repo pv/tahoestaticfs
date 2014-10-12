@@ -272,17 +272,25 @@ class CacheDB(object):
             c = c.inode
 
         if c.upath is not None and c.dirty:
-            parent_cap = self._lookup_cap(udirname(c.upath), io, read_only=False, 
-                                          lifetime=self.write_lifetime)
-            c.upload(io, parent_cap=parent_cap)
-            self.invalidate(udirname(c.upath), shallow=True)
+            parent = self.open_dir(udirname(c.upath), io, lifetime=self.write_lifetime)
+            try:
+                parent_cap = parent.inode.info[1][u'rw_uri']
+
+                # Upload
+                cap = c.upload(io, parent_cap=parent_cap)
+
+                # Add in cache
+                with self.lock:
+                    parent.inode.cache_add_child(ubasename(c.upath), cap, size=c.get_size())
+            finally:
+                self.close_dir(parent)
 
     def unlink(self, upath, io, is_dir=False):
         if upath == u'':
             raise IOError(errno.EACCES, "cannot unlink root directory")
 
         with self.lock:
-            # Invalidate cache
+            # Unlink in cache
             if is_dir:
                 f = self.open_dir(upath, io, lifetime=self.write_lifetime)
             else:
@@ -295,8 +303,6 @@ class CacheDB(object):
                 else:
                     self.close_file(f)
 
-            self.invalidate(udirname(upath), shallow=True)
-
             # Perform unlink
             try:
                 cap = io.delete(upath)
@@ -305,61 +311,77 @@ class CacheDB(object):
                     raise IOError(errno.ENOENT, "no such file")
                 raise IOError(errno.EREMOTEIO, "failed to retrieve information")
 
+            # Remove from cache
+            f = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
+            try:
+                f.inode.cache_remove_child(ubasename(upath))
+            finally:
+                self.close_dir(f)
+
     def mkdir(self, upath, io):
         if upath == u'':
             raise IOError(errno.EEXIST, "cannot re-mkdir root directory")
 
         with self.lock:
             # Check that parent exists
-            f = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
-            parent_cap = f.inode.info[1][u'rw_uri']
-            self.close_dir(f)
-
-            # Check that the target does not exist
+            parent = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
             try:
-                f = self.open_dir(upath, io, lifetime=self.write_lifetime)
-            except IOError, err:
-                if err.errno == errno.ENOENT:
-                    pass
-                else:
-                    raise
-            else:
-                self.close_dir(f)
-                raise IOError(errno.EEXIST, "directory already exists")
+                parent_cap = parent.inode.info[1][u'rw_uri']
 
-            # Invalidate cache
-            self.invalidate(upath)
-            self.invalidate(udirname(upath), shallow=True)
-
-            # Perform operation
-            upath = parent_cap + u'/' + ubasename(upath)
-            try:
-                cap = io.mkdir(upath, iscap=True)
-            except HTTPError, err:
-                raise IOError(err.EREMOTEIO, "remote operation failed")
-
-    def get_attr(self, upath, io):
-        with self.lock:
-            if upath == u'':
-                dir = self.open_dir(upath, io)
+                # Check that the target does not exist
                 try:
-                    info = dir.get_attr()
-                finally:
-                    self.close_dir(dir)
-            else:
-                upath_parent = udirname(upath)
-                dir = self.open_dir(upath_parent, io)
-                try:
-                    info = dir.get_child_attr(ubasename(upath))
+                    parent.get_child_attr(ubasename(upath))
                 except IOError, err:
-                    if err.errno == errno.ENOENT and upath in self.open_items:
-                        # New file that has not yet been uploaded
-                        info = {}
+                    if err.errno == errno.ENOENT:
+                        pass
                     else:
                         raise
-                finally:
-                    self.close_dir(dir)
+                else:
+                    raise IOError(errno.EEXIST, "directory already exists")
 
+                # Invalidate cache
+                self.invalidate(upath)
+
+                # Perform operation
+                upath = parent_cap + u'/' + ubasename(upath)
+                try:
+                    cap = io.mkdir(upath, iscap=True)
+                except HTTPError, err:
+                    raise IOError(err.EREMOTEIO, "remote operation failed")
+
+                # Add in cache
+                parent.inode.cache_add_child(ubasename(upath), cap, size=None)
+            finally:
+                self.close_dir(parent)
+
+    def get_attr(self, upath, io):
+        import sys
+        if upath == u'':
+            dir = self.open_dir(upath, io)
+            try:
+                info = dir.get_attr()
+            finally:
+                self.close_dir(dir)
+        else:
+            upath_parent = udirname(upath)
+            dir = self.open_dir(upath_parent, io)
+            try:
+                info = dir.get_child_attr(ubasename(upath))
+            except IOError, err:
+                with self.lock:
+                    if err.errno == errno.ENOENT and upath in self.open_items:
+                        # New file that has not yet been uploaded
+                        info = dict(self.open_items[upath].get_attr())
+                        if 'mtime' not in info:
+                            info['mtime'] = time.time()
+                        if 'ctime' not in info:
+                            info['ctime'] = time.time()
+                    else:
+                        raise
+            finally:
+                self.close_dir(dir)
+
+        with self.lock:
             if upath in self.open_items:
                 info.update(self.open_items[upath].get_attr())
                 if 'mtime' not in info:
@@ -367,7 +389,7 @@ class CacheDB(object):
                 if 'ctime' not in info:
                     info['ctime'] = time.time()
 
-            return info
+        return info
 
     def _lookup_cap(self, upath, io, read_only=True, lifetime=None):
         if lifetime is None:
@@ -425,6 +447,14 @@ class CacheDB(object):
                 f = CachedFileInode(self, upath, io, filecap=cap, 
                                     persistent=self.cache_data)
                 self.open_items[upath] = f
+
+                if cap is None:
+                    # new file: add to parent inode
+                    d = self.open_dir(udirname(upath), io, lifetime=lifetime)
+                    try:
+                        d.inode.cache_add_child(ubasename(upath), None, size=0)
+                    finally:
+                        self.close_dir(d)
                 return f
             else:
                 if excl:
@@ -699,6 +729,9 @@ class CachedFileInode(object):
             if isinstance(err, HTTPError) and err.code == 404:
                 raise IOError(errno.ENOENT, "no such file")
             raise IOError(errno.EREMOTEIO, "failed to retrieve information")
+        self._save_info()
+
+    def _save_info(self):
         self.f.truncate(0)
         self.f.seek(0)
         if u'retrieved' not in self.info[1]:
@@ -842,12 +875,6 @@ class CachedFileInode(object):
 
     def upload(self, io, parent_cap=None):
         with self.lock:
-            if not self.dirty:
-                # No changes
-                return
-            if self.upath is None:
-                return
-
             # Buffer all data
             self._buffer_whole_file(io)
 
@@ -876,10 +903,13 @@ class CachedFileInode(object):
             except HTTPError, err:
                 raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
 
-            filecap = filecap.decode('latin1').strip()
-            self._load_info(filecap, io, iscap=True)
+            self.info[1][u'ro_uri'] = filecap
+            self.info[1][u'size'] = self.get_size()
+            self._save_info()
 
             self.dirty = False
+
+            return filecap
 
     def unlink(self):
         with self.lock:
@@ -903,17 +933,17 @@ class CachedDirInode(object):
         self.lock = threading.RLock()
         self.invalidated = False
 
-        filename, key = cachedb.get_filename_and_key(upath)
+        self.filename, self.key = cachedb.get_filename_and_key(upath)
+
         try:
-            with CryptFile(filename, key=key, mode='rb') as f:
+            with CryptFile(self.filename, key=self.key, mode='rb') as f:
                 self.info = json_zlib_load(f)
-            self.filename = filename
-            os.utime(filename, None)
+            os.utime(self.filename, None)
             return
         except (IOError, OSError, ValueError):
             pass
 
-        f = CryptFile(filename, key=key, mode='w+b')
+        f = CryptFile(self.filename, key=self.key, mode='w+b')
         try:
             if dircap is not None:
                 self.info = io.get_info(dircap, iscap=True)
@@ -922,12 +952,14 @@ class CachedDirInode(object):
             self.info[1][u'retrieved'] = time.time()
             json_zlib_dump(self.info, f)
         except (HTTPError, ValueError):
-            os.unlink(filename)
+            os.unlink(self.filename)
             raise IOError(errno.EREMOTEIO, "failed to retrieve information")
         finally:
             f.close()
 
-        self.filename = filename
+    def _save_info(self):
+        with CryptFile(self.filename, key=self.key, mode='w+b') as f:
+            json_zlib_dump(self.info, f)
 
     def is_fresh(self, lifetime):
         return (self.info[1][u'retrieved'] + lifetime >= time.time())
@@ -979,6 +1011,33 @@ class CachedDirInode(object):
         if self.upath is not None and not self.invalidated:
             os.unlink(self.filename)
         self.upath = None
+
+    def cache_add_child(self, basename, cap, size):
+        children = self.info[1][u'children']
+
+        if basename in children:
+            info = children[basename]
+        else:
+            if cap is not None and cap.startswith(u'URI:DIR'):
+                info = [u'dirnode', {u'metadata': {u'tahoe': {u'linkcrtime': time.time()}}}]
+            else:
+                info = [u'filenode', {u'metadata': {u'tahoe': {u'linkcrtime': time.time()}}}]
+
+        if info[0] == u'dirnode':
+            info[1][u'ro_uri'] = cap
+            info[1][u'rw_uri'] = cap
+        elif info[0] == u'filenode':
+            info[1][u'ro_uri'] = cap
+            info[1][u'size'] = size
+
+        children[basename] = info
+        self._save_info()
+
+    def cache_remove_child(self, basename):
+        children = self.info[1][u'children']
+        if basename in children:
+            del children[basename]
+            self._save_info()
 
 
 class RandomString(object):
