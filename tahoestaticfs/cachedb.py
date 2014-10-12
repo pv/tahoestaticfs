@@ -241,7 +241,8 @@ class CacheDB(object):
             upath = f.upath
             f.close()
             if c.closed:
-                del self.open_items[upath]
+                if upath in self.open_items:
+                    del self.open_items[upath]
                 self._restrict_size()
 
     def close_dir(self, f):
@@ -250,7 +251,8 @@ class CacheDB(object):
             upath = f.upath
             f.close()
             if c.closed:
-                del self.open_items[upath]
+                if upath in self.open_items:
+                    del self.open_items[upath]
                 self._restrict_size()
 
     def upload_file(self, f, io):
