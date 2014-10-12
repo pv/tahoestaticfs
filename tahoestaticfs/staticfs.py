@@ -192,6 +192,11 @@ class TahoeStaticFS(fuse.Fuse):
 
         return st
 
+    @ioerrwrap
+    def unlink(self, path):
+        upath = self.cache.get_upath(path)
+        self.cache.unlink(upath, self.io)
+        return 0
 
 def parse_size(size_str):
     multipliers = {

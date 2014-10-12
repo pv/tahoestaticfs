@@ -127,3 +127,10 @@ class TahoeConnection(object):
             return f.read()
         finally:
             f.close()
+
+    def delete(self, path, iscap=False):
+        f = self._delete(path, iscap=iscap)
+        try:
+            return f.read()
+        finally:
+            f.close()

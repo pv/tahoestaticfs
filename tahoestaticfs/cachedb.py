@@ -132,9 +132,10 @@ class CacheDB(object):
             try:
                 with CryptFile(fn, key=key, mode='rb') as f:
                     data = json_zlib_load(f)
-                    if data[0] != u'dirnode':
-                        raise ValueError()
-                    children = data[1].get(u'children', {}).items()
+                    if data[0] == u'dirnode':
+                        children = data[1].get(u'children', {}).items()
+                    else:
+                        children = []
             except (IOError, OSError, ValueError):
                 continue
 
@@ -218,6 +219,12 @@ class CacheDB(object):
 
     def open_file(self, upath, io, flags):
         with self.lock:
+            writeable = (flags & (os.O_RDONLY | os.O_RDWR | os.O_WRONLY)) in (os.O_RDWR, os.O_WRONLY)
+            if writeable:
+                # Drop file data cache before opening in write mode
+                if upath not in self.open_items:
+                    self.invalidate(upath)
+
             f = self.get_file_inode(upath, io,
                                     excl=(flags & os.O_EXCL),
                                     creat=(flags & os.O_CREAT))
@@ -250,7 +257,28 @@ class CacheDB(object):
         c = f.cached_file
         if c.upath is not None and c.dirty:
             c.upload(io)
-            self.invalidate(os.path.dirname(c.upath), shallow=True)
+            self.invalidate(udirname(c.upath), shallow=True)
+
+    def unlink(self, upath, io):
+        if upath == u'':
+            raise IOError(errno.EACCES, "cannot unlink root directory")
+
+        with self.lock:
+            # Invalidate cache
+            if upath in self.open_items:
+                self.open_items[upath].unlink()
+                del self.open_items[upath]
+            else:
+                self.invalidate(upath)
+            self.invalidate(udirname(upath), shallow=True)
+
+            # Perform unlink
+            try:
+                cap = io.delete(upath)
+            except HTTPError, err:
+                if err.code == 404:
+                    raise IOError(errno.ENOENT, "no such file")
+                raise IOError(errno.EREMOTEIO, "failed to retrieve information")
 
     def get_attr(self, upath, io):
         with self.lock:
@@ -261,10 +289,10 @@ class CacheDB(object):
                 finally:
                     self.close_dir(dir)
             else:
-                upath_parent = os.path.dirname(upath)
+                upath_parent = udirname(upath)
                 dir = self.open_dir(upath_parent, io)
                 try:
-                    info = dir.get_child_attr(os.path.basename(upath))
+                    info = dir.get_child_attr(ubasename(upath))
                 finally:
                     self.close_dir(dir)
 
@@ -283,8 +311,8 @@ class CacheDB(object):
                 return None
             else:
                 # lookup from parent
-                entry_name = os.path.basename(upath)
-                parent_upath = os.path.dirname(upath)
+                entry_name = ubasename(upath)
+                parent_upath = udirname(upath)
 
                 parent = self.open_dir(parent_upath, io)
                 try:
@@ -308,7 +336,7 @@ class CacheDB(object):
                                     excl=excl, creat=creat)
                 if cap is None:
                     f.upload(io)
-                    self.invalidate(os.path.dirname(upath), shallow=True)
+                    self.invalidate(udirname(upath), shallow=True)
                 self.open_items[upath] = f
                 return f
             else:
@@ -347,7 +375,7 @@ class CacheDB(object):
     def get_upath(self, path):
         try:
             path = os.path.normpath(path)
-            return path.decode(sys.getfilesystemencoding()).lstrip(u'/')
+            return path.decode(sys.getfilesystemencoding().replace(os.sep, "/")).lstrip(u'/')
         except UnicodeError:
             raise IOError(errno.ENOENT, "file does not exist")
 
@@ -895,6 +923,14 @@ class ZlibDecompressor(object):
             block = self.buf[:sz]
             self.buf = self.buf[sz:]
         return block
+
+
+def udirname(upath):
+    return u"/".join(upath.split(u"/")[:-1])
+
+
+def ubasename(upath):
+    return upath.split(u"/")[-1]
 
 
 # constants for cache score calculation
