@@ -287,6 +287,37 @@ class CacheDB(object):
                     raise IOError(errno.ENOENT, "no such file")
                 raise IOError(errno.EREMOTEIO, "failed to retrieve information")
 
+    def mkdir(self, upath, io):
+        if upath == u'':
+            raise IOError(errno.EEXIST, "cannot re-mkdir root directory")
+
+        with self.lock:
+            # Check that parent exists
+            f = self.open_dir(udirname(upath), io)
+            self.close_dir(f)
+
+            # Check that the target does not exist
+            try:
+                f = self.open_dir(upath, io)
+            except IOError, err:
+                if err.errno == errno.ENOENT:
+                    pass
+                else:
+                    raise
+            else:
+                self.close_dir(f)
+                raise IOError(errno.EEXIST, "directory already exists")
+
+            # Invalidate cache
+            self.invalidate(upath)
+            self.invalidate(udirname(upath), shallow=True)
+
+            # Perform operation
+            try:
+                cap = io.mkdir(upath)
+            except HTTPError, err:
+                raise IOError(err.EREMOTEIO, "remote operation failed")
+
     def get_attr(self, upath, io):
         with self.lock:
             if upath == u'':

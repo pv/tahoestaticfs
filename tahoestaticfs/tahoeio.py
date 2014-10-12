@@ -134,3 +134,10 @@ class TahoeConnection(object):
             return f.read()
         finally:
             f.close()
+
+    def mkdir(self, path):
+        f = self._post(path, params={u't': u'mkdir'})
+        try:
+            return f.read()
+        finally:
+            f.close()

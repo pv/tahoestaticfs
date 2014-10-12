@@ -204,6 +204,13 @@ class TahoeStaticFS(fuse.Fuse):
         self.cache.unlink(upath, self.io, is_dir=True)
         return 0
 
+    @ioerrwrap
+    def mkdir(self, path, mode):
+        # *mode* is dropped; not supported on tahoe
+        upath = self.cache.get_upath(path)
+        self.cache.mkdir(upath, self.io)
+        return 0
+
 
 def parse_size(size_str):
     multipliers = {
