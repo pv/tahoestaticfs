@@ -118,14 +118,11 @@ class TahoeStaticFS(fuse.Fuse):
 
         entries = [fuse.Direntry(b'.'), 
                    fuse.Direntry(b'..')]
-        encoding = sys.getfilesystemencoding()
-        if encoding == 'ascii':
-            encoding = 'utf-8'
 
         f = self.cache.open_dir(upath, self.io)
         try:
             for c in f.listdir():
-                entries.append(fuse.Direntry(c.encode(encoding)))
+                entries.append(fuse.Direntry(self.cache.path_from_upath(c)))
         finally:
             self.cache.close_dir(f)
 
