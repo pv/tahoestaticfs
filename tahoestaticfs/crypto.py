@@ -38,7 +38,7 @@ def HKDF_SHA256_expand(prk, info, length):
     data = []
     t = b""
     for j in range(n):
-        t = HMAC.new(prk, msg=t + info + chr(j), digestmod=SHA256).digest()
+        t = HMAC.new(prk, msg=t + info + chr(j+1), digestmod=SHA256).digest()
         data.append(t)
     return b"".join(data)[:length]
 
