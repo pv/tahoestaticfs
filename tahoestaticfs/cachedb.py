@@ -12,11 +12,12 @@ import errno
 import threading
 import heapq
 
-from Crypto.Hash import HMAC, SHA512
-from M2Crypto.EVP import pbkdf2
+from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from tahoestaticfs.tahoeio import HTTPError
-from tahoestaticfs.crypto import CryptFile, HKDF_SHA256_extract, HKDF_SHA256_expand
+from tahoestaticfs.crypto import CryptFile, backend
 from tahoestaticfs.blockcache import BlockCachedFile
 
 
@@ -35,7 +36,7 @@ class CacheDB(object):
         self.write_lifetime = write_lifetime
 
         self.path = path
-        self.prk = self._generate_prk(rootcap)
+        self.key, self.salt_hkdf = self._generate_prk(rootcap)
 
         self.last_size_check_time = 0
 
@@ -83,11 +84,15 @@ class CacheDB(object):
             start = time.time()
             count = 0
             while True:
-                pbkdf2(password="a"*len(rootcap.encode('ascii')),
-                       salt="b"*len(salt),
-                       iter=1000,
-                       keylen=32)
-                count += 1000
+                kdf = PBKDF2HMAC(
+                    algorithm=hashes.SHA256(),
+                    length=32,
+                    salt="b"*len(salt),
+                    iterations=10000,
+                    backend=backend
+                )
+                kdf.derive("a"*len(rootcap.encode('ascii')))
+                count += 10000
                 if time.time() > start + 0.05:
                     break
             numiter = max(10000, int(count * 1.0 / (time.time() - start)))
@@ -99,13 +104,17 @@ class CacheDB(object):
                 f.write(salt_hkdf)
 
         # Derive key
-        key = pbkdf2(password=rootcap.encode('ascii'),
-                     salt=salt,
-                     iter=numiter,
-                     keylen=32)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=numiter,
+            backend=backend
+        )
+        key = kdf.derive(rootcap.encode('ascii'))
 
         # HKDF private key material for per-file keys
-        return HKDF_SHA256_extract(salt=salt_hkdf, key=key)
+        return key, salt_hkdf
 
     def _walk_cache_subtree(self, root_upath=u""):
         """
@@ -518,13 +527,21 @@ class CacheDB(object):
         info = path
         if ext is not None:
             info += nonpath + ext
-        data = HKDF_SHA256_expand(self.prk, info, 3*32)
+
+        hkdf = HKDF(algorithm=hashes.SHA256(),
+                    length=3*32,
+                    salt=self.salt_hkdf,
+                    info=info,
+                    backend=backend)
+        data = hkdf.derive(self.key)
 
         # Generate key
         key = data[:32]
 
         # Generate filename
-        fn = HMAC.new(data[32:], msg=info, digestmod=SHA512).hexdigest()
+        h = hmac.HMAC(key=data[32:], algorithm=hashes.SHA512(), backend=backend)
+        h.update(info)
+        fn = h.finalize().encode('hex')
         return os.path.join(self.path, fn), key
 
 

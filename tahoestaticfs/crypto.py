@@ -8,39 +8,12 @@ import struct
 import errno
 import fcntl
 
-from Crypto.Cipher import AES
-from Crypto.Hash import HMAC, SHA256
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
 
+backend = default_backend()
 
 BLOCK_SIZE = 131072
-
-
-def HKDF_SHA256_extract(salt, key):
-    """
-    HKDF-SHA256 extract
-    """
-    prk = HMAC.new(salt, msg=key, digestmod=SHA256).digest()
-    return prk
-
-def HKDF_SHA256_expand(prk, info, length):
-    """
-    32-bit HKDF extract + expand
-    """
-    if len(prk) != 32:
-        raise ValueError("Invalid prk length")
-
-    n, off = divmod(length, 32)
-    if off != 0:
-        n += 1
-    if n >= 256:
-        raise ValueError("Too long data")
-
-    data = []
-    t = b""
-    for j in range(n):
-        t = HMAC.new(prk, msg=t + info + chr(j+1), digestmod=SHA256).digest()
-        data.append(t)
-    return b"".join(data)[:length]
 
 
 class CryptFile(object):
@@ -87,9 +60,9 @@ class CryptFile(object):
         self.mode = mode
         self.key = key
 
-        assert AES.block_size == 16
+        assert algorithms.AES.block_size//8 == 16
 
-        if block_size % AES.block_size != 0:
+        if block_size % 16 != 0:
             raise ValueError("Block size must be multiple of AES block size")
         self.block_size = block_size
 
@@ -116,17 +89,19 @@ class CryptFile(object):
             return
 
         iv = os.urandom(self.IV_SIZE)
-        encryptor = AES.new(self.key, AES.MODE_CBC, iv)
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv), backend=backend)
+        encryptor = cipher.encryptor()
 
         self.fp.seek(self.HEADER_SIZE + self.current_block * (self.IV_SIZE + self.block_size))
         self.fp.write(iv)
 
         off = (len(self.block_cache) % 16)
         if off == 0:
-            self.fp.write(encryptor.encrypt(bytes(self.block_cache)))
+            self.fp.write(encryptor.update(bytes(self.block_cache)))
         else:
             # insert random padding
-            self.fp.write(encryptor.encrypt(bytes(self.block_cache) + os.urandom(16-off)))
+            self.fp.write(encryptor.update(bytes(self.block_cache) + os.urandom(16-off)))
+        self.fp.write(encryptor.finalize())
 
         self.block_dirty = False
 
@@ -147,7 +122,8 @@ class CryptFile(object):
             return
 
         ciphertext = self.fp.read(self.block_size)
-        decryptor = AES.new(self.key, AES.MODE_CBC, iv)
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv), backend=backend)
+        decryptor = cipher.decryptor()
 
         if (i+1)*self.block_size > self.data_size:
             size = self.data_size - i*self.block_size
@@ -155,7 +131,7 @@ class CryptFile(object):
             size = self.block_size
 
         self.current_block = i
-        self.block_cache = decryptor.decrypt(ciphertext)[:size]
+        self.block_cache = (decryptor.update(ciphertext) + decryptor.finalize())[:size]
         self.block_dirty = False
 
     def seek(self, offset, whence=0):
