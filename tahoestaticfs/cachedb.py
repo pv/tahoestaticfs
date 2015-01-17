@@ -1013,19 +1013,29 @@ class CachedDirInode(object):
             raise IOError(errno.ENOENT, "no such entry")
 
         info = children[childname]
+
+        # tahoe:linkcrtime doesn't exist for entries created by "tahoe backup",
+        # but explicit 'mtime' and 'ctime' do, so use them.
+        ctime = info[1][u'metadata'].get(u'tahoe', {}).get(u'linkcrtime')
+        mtime = info[1][u'metadata'].get(u'tahoe', {}).get(u'linkcrtime')   # should this be 'linkmotime'?
+        if ctime is None:
+            ctime = info[1][u'metadata'][u'ctime']
+        if mtime is None:
+            mtime = info[1][u'metadata'][u'mtime']
+
         if info[0] == u'dirnode':
             return dict(type='dir', 
                         ro_uri=info[1][u'ro_uri'],
                         rw_uri=info[1].get(u'rw_uri'),
-                        ctime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'],
-                        mtime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'])
+                        ctime=ctime,
+                        mtime=mtime)
         elif info[0] == u'filenode':
             return dict(type='file',
                         size=info[1][u'size'],
                         ro_uri=info[1][u'ro_uri'],
                         rw_uri=info[1].get(u'rw_uri'),
-                        ctime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'],
-                        mtime=info[1][u'metadata'][u'tahoe'][u'linkcrtime'])
+                        ctime=ctime,
+                        mtime=mtime)
         else:
             raise IOError(errno.ENOENT, "invalid entry")
 
