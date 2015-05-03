@@ -36,7 +36,6 @@ class TestBlockCachedFile(object):
         while True:
             if write:
                 pos = blockfile.pre_write(offset, length)
-                print "pre_write", offset, length, pos
             else:
                 pos = blockfile.pre_read(offset, length)
 

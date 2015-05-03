@@ -1,6 +1,8 @@
-import os
 import struct
 import errno
+import array
+import heapq
+import itertools
 
 
 BLOCK_SIZE = 131072
@@ -21,16 +23,16 @@ class BlockStorage(object):
     def __init__(self, f, block_size):
         self.f = f
         self.block_size = block_size
-        self.block_map = []
-        self.free_block_idx = 0
+        self.block_map = array.array('l')
         self.zero_block = b"\x00"*self.block_size
+        self._reconstruct_free_map()
 
     def save_state(self, f):
         f.truncate(0)
         f.seek(0)
         f.write(b"BLK2")
         f.write(struct.pack('<Qq', self.block_size, len(self.block_map)))
-        f.write(struct.pack('<%dq' % (len(self.block_map),), *self.block_map))
+        f.write(self.block_map.tostring())
 
     @classmethod
     def restore_state(cls, f, state_file):
@@ -40,21 +42,56 @@ class BlockStorage(object):
         s = state_file.read(2 * 8)
         block_size, num_blocks = struct.unpack('<Qq', s)
 
-        s = state_file.read(num_blocks * 8)
-        block_map = list(struct.unpack('<%dq' % (num_blocks,), s))
+        block_map = array.array('l')
+        s = state_file.read(num_blocks * block_map.itemsize)
+        block_map.fromstring(s)
 
         self = cls.__new__(cls)
         self.f = f
         self.block_size = block_size
         self.block_map = block_map
-        self.free_block_idx = 0
         self.zero_block = b"\x00"*self.block_size
+        self._reconstruct_free_map()
         return self
 
+    def _reconstruct_free_map(self):
+        if self.block_map:
+            max_block = max(self.block_map)
+        else:
+            max_block = -1
+
+        if max_block < 0:
+            self.free_block_idx = 0
+            self.free_map = []
+            return
+
+        mask = array.array('b', itertools.repeat(0, max_block+1))
+        for x in self.block_map:
+            if x >= 0:
+                mask[x] = 1
+
+        free_map = [j for j, x in enumerate(mask) if x == 0]
+        heapq.heapify(free_map)
+
+        self.free_map = free_map
+        self.free_block_idx = max_block + 1
+
     def _get_free_block_idx(self):
-        while self.free_block_idx in self.block_map:
-            self.free_block_idx += 1
-        return self.free_block_idx
+        if self.free_map:
+            return heapq.heappop(self.free_map)
+        idx = self.free_block_idx
+        self.free_block_idx += 1
+        return idx
+
+    def _add_free_block_idx(self, idx):
+        heapq.heappush(self.free_map, idx)
+
+    def _truncate_free_map(self, end_block):
+        self.free_block_idx = end_block
+        last_map_size = len(self.free_map)
+        self.free_map = [x for x in self.free_map if x < end_block]
+        if last_map_size != len(self.free_map):
+            heapq.heapify(self.free_map)
 
     def __contains__(self, idx):
         if not idx >= 0:
@@ -88,8 +125,8 @@ class BlockStorage(object):
 
         if data is None or data == self.zero_block:
             block_idx = self.block_map[idx]
-            if block_idx >= 0 and block_idx < self.free_block_idx:
-                self.free_block_idx = block_idx
+            if block_idx >= 0:
+                self._add_free_block_idx(block_idx)
             self.block_map[idx] = BLOCK_ZERO
         else:
             if len(data) > self.block_size:
@@ -116,11 +153,12 @@ class BlockStorage(object):
 
     def truncate(self, num_blocks):
         self.block_map = self.block_map[:num_blocks]
-        self.free_block_idx = min(self.free_block_idx, num_blocks)
-        num_blocks = 0
+
+        end_block = 0
         if self.block_map:
-            num_blocks = max(0, max(self.block_map) + 1)
-        self.f.truncate(self.block_size * num_blocks)
+            end_block = max(0, max(self.block_map) + 1)
+        self.f.truncate(self.block_size * end_block)
+        self._truncate_free_map(end_block)
 
 
 class BlockCachedFile(object):
