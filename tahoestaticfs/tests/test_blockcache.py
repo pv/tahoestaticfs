@@ -7,7 +7,7 @@ import array
 
 from nose.tools import assert_equal, assert_raises
 
-from tahoestaticfs.blockcache import BlockCachedFile, BlockStorage
+from tahoestaticfs.blockcache import BlockCachedFile, BlockStorage, block_range, ceildiv
 from tahoestaticfs.crypto import CryptFile
 
 
@@ -36,6 +36,7 @@ class TestBlockCachedFile(object):
         while True:
             if write:
                 pos = blockfile.pre_write(offset, length)
+                print "pre_write", offset, length, pos
             else:
                 pos = blockfile.pre_read(offset, length)
 
@@ -91,7 +92,12 @@ class TestBlockCachedFile(object):
                 assert_equal(block, sim_data[a:b].tostring())
             else:
                 # write op
-                block = os.urandom(b - a)
+                if j % 31 == 0:
+                    # sometimes write zeros
+                    block = b"\x00" * (b - a)
+                else:
+                    # at other times, random data
+                    block = os.urandom(b - a)
                 sim_data[a:b] = array.array('c', block)
                 self._do_write(f, a, block)
                 file_size = max(file_size, a + len(block))
@@ -111,9 +117,20 @@ class TestBlockCachedFile(object):
             sim_data = array.array('c', self.cache_data + "\x00"*(max_file_size-file_size))
             tmpf = tempfile.TemporaryFile()
             f = BlockCachedFile(tmpf, file_size, block_size=7)
-            self._do_random_rw(f, sim_data, file_size, max_file_size, count=500)
+            self._do_random_rw(f, sim_data, file_size, max_file_size, count=5000)
 
         f.close()
+
+    def test_pad_file(self):
+        tmpf = tempfile.TemporaryFile()
+        f = BlockCachedFile(tmpf, 19, block_size=7)
+
+        # Check that padding the file does not leave spurious
+        # unnallocated blocks
+        start_idx = ceildiv(f.cache_size, f.block_size)
+        for k in [3*7, 3*7+1, 3*7+3, 540, 1090]:
+            f._pad_file(k)
+            assert -1 not in f.storage.block_map[start_idx:], k
 
     def test_write_past_end(self):
         # Check that write-past-end has POSIX semantics
@@ -137,6 +154,15 @@ class TestBlockCachedFile(object):
         assert_equal(self._do_read(f, 0, 15), b"b"*7)
         f.truncate(0)
         assert_equal(self._do_read(f, 0, 15), b"")
+
+        self._do_write(f, 0, b"b"*1237)
+        assert_equal(self._do_read(f, 1200, 15), b"b"*15)
+        f.truncate(1200 + 7)
+        assert_equal(self._do_read(f, 1200, 15), b"b"*7)
+        f.truncate(1200 + 0)
+        assert_equal(self._do_read(f, 1200, 15), b"")
+        f.truncate(1200 - 20)
+        assert_equal(self._do_read(f, 1200, 15), b"")
         f.close()
 
     def test_on_top_cryptfile(self):
@@ -218,3 +244,48 @@ class TestBlockStorage(object):
         f = BlockStorage.restore_state(tmpf, statef)
         assert_equal(f[0], block_1)
         assert_equal(f[2], block_2)
+
+
+class TestBlockRange(object):
+    def _check_block_slice(self, data, offset, length, block_size, last_pos=None):
+        """
+        Check block_range invariant
+        """
+
+        start, mid, end = block_range(offset, length, block_size, last_pos)
+        blocks = [data[j:j+block_size] for j in range(0, len(data), block_size)]
+
+        new_data = b""
+        if start is not None:
+            new_data += blocks[start[0]][start[1]:start[2]]
+        if mid is not None:
+            for idx in xrange(*mid):
+                new_data += blocks[idx]
+        if end is not None:
+            new_data += blocks[end[0]][:end[1]]
+
+        a = new_data
+        b = data[offset:offset+length]
+        assert_equal(a, b,
+                     repr((a, b, offset, length, block_size, last_pos, start, mid, end)))
+
+    def test_basics(self):
+        data = os.urandom(31)
+
+        for offset in range(0, 35):
+            for length in range(0, 35):
+                for block_size in [1, 2, 3, 5, 7, 11]:
+                    self._check_block_slice(data, offset, length, block_size,
+                                            last_pos=len(data))
+
+    def test_ceildiv(self):
+        for k in range(100):
+            for p in [3, 8, 17]:
+                b, remainder = divmod(k, p)
+                if remainder > 0:
+                    b += 1
+
+                a = ceildiv(k, p)
+                assert_equal(a, b, repr((a, b, k, p)))
+
+        assert_raises(ZeroDivisionError, ceildiv, 5, 0)

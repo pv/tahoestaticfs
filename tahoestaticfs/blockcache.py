@@ -8,12 +8,9 @@ BLOCK_UNALLOCATED = -1
 BLOCK_ZERO = -2
 
 
-def _ceildiv(a, b):
-    """Compute ceil(a/b)"""
-    n, remainder = divmod(a, b)
-    if remainder > 0:
-        n += 1
-    return n
+def ceildiv(a, b):
+    """Compute ceil(a/b); i.e. rounded towards positive infinity"""
+    return 1 + (a-1)//b
 
 
 class BlockStorage(object):
@@ -68,7 +65,7 @@ class BlockStorage(object):
 
     def __getitem__(self, idx):
         if idx not in self:
-            raise KeyError("Block not allocated")
+            raise KeyError("Block %d not allocated" % (idx,))
 
         block_idx = self.block_map[idx]
         if block_idx >= 0:
@@ -165,36 +162,6 @@ class BlockCachedFile(object):
         self.block_size = self.storage.block_size
         return self
 
-    def _get_block_range(self, offset, length, inner=False):
-        """
-        For inner=False: compute block range fully containing [offset, offset+length)
-        For inner=True: compute block range fully contained in [offset, offset+length)
-        """
-        length = max(min(length, self.size - offset), 0)
-
-        start_block, start_skip = divmod(offset, self.block_size)
-        end_block, end_skip = divmod(offset + length, self.block_size)
-
-        if inner:
-            if start_skip > 0:
-                start_block += 1
-                start_skip = self.block_size - start_skip
-
-            if offset + length == self.size and end_skip > 0:
-                # the last block can be partial
-                end_skip = 0
-                end_block += 1
-        else:
-            if end_skip > 0:
-                end_block += 1
-                if offset + length == self.size:
-                    # last block can be partial
-                    end_skip = 0
-                else:
-                    end_skip = self.block_size - end_skip
-
-        return start_block, end_block, start_skip, end_skip
-
     def _pad_file(self, new_size):
         """
         Append zero bytes that the virtual size grows to new_size
@@ -204,11 +171,17 @@ class BlockCachedFile(object):
 
         # Fill remainder blocks in the file with nulls; the last
         # existing block, if partial, is implicitly null-padded
-        start_block = _ceildiv(self.size, self.block_size)
-        end_block = _ceildiv(new_size, self.block_size)
+        start, mid, end = block_range(self.size, new_size - self.size, block_size=self.block_size)
 
-        for idx in range(start_block, end_block):
-            self.storage[idx] = None
+        if start is not None and start[1] == 0:
+            self.storage[start[0]] = None
+
+        if mid is not None:
+            for idx in range(*mid):
+                self.storage[idx] = None
+
+        if end is not None:
+            self.storage[end[0]] = None
 
         self.size = new_size
 
@@ -220,44 +193,35 @@ class BlockCachedFile(object):
         """
         data_size = sum(len(data) for data in data_list)
 
-        start_block, end_block, start_skip, end_skip = self._get_block_range(
-            offset, data_size, inner=True)
+        start, mid, end = block_range(offset, data_size, last_pos=self.cache_size,
+                                      block_size=self.block_size)
 
-        if start_block == end_block:
-            if offset + data_size >= self.cache_size:
-                # last block can be partial
-                end_block += 1
-                end_skip = 0
-            else:
-                # not enough data
-                return offset, data_list
+        if mid is None:
+            # not enough data for full blocks
+            return offset, data_list
 
-        data = "".join(data_list)[start_skip:]
+        data = "".join(data_list)
 
-        if start_block < self.first_uncached_block:
-            i = self.first_uncached_block - start_block
-            start_block = self.first_uncached_block
-        else:
-            i = 0
+        i = 0
+        if start is not None:
+            # skip initial part
+            i = self.block_size - start[1]
 
-        end_block = min(end_block, _ceildiv(self.cache_size, self.block_size))
-
-        for j in xrange(start_block, end_block):
+        for j in xrange(*mid):
             if j not in self.storage:
-                block = data[i*self.block_size:(i+1)*self.block_size]
+                block = data[i:i+self.block_size]
                 self.storage[j] = block
-            i += 1
+            i += min(self.block_size, data_size - i)
 
-        if start_block <= self.first_uncached_block:
-            self.first_uncached_block = max(self.first_uncached_block, end_block)
+        if mid[0] <= self.first_uncached_block:
+            self.first_uncached_block = max(self.first_uncached_block, mid[1])
 
         # Return trailing data for possible future use
-        if end_skip > 0:
-            data_list = [data[-end_skip:]]
-            offset += data_size - len(data_list[0])
+        if i < data_size:
+            data_list = [data[i:]]
         else:
             data_list = []
-            offset += data_size
+        offset += i
         return (offset, data_list)
 
     def get_size(self):
@@ -274,7 +238,7 @@ class BlockCachedFile(object):
 
     def truncate(self, size):
         if size < self.size:
-            self.storage.truncate(_ceildiv(size, self.block_size))
+            self.storage.truncate(ceildiv(size, self.block_size))
             self.size = size
         elif size > self.size:
             self._pad_file(size)
@@ -290,85 +254,53 @@ class BlockCachedFile(object):
             # noop
             return
 
-        # Sanity check cache status
-        if self.pre_write(offset, len(data)) is not None:
-            raise RuntimeError("attempt to write before caching")
-
         # Perform write
-        start_block, start_pos = divmod(offset, self.block_size)
-        end_block, end_pos = divmod(offset + len(data), self.block_size)
-        if end_pos == 0 and end_block > start_block:
-            end_block -= 1
-            end_pos = self.block_size
+        start, mid, end = block_range(offset, len(data), block_size=self.block_size)
 
         # Pad virtual size
         self._pad_file(offset + len(data))
-        self.size = max(self.size, offset + len(data))
 
         # Write first block
-        if start_pos == 0 and start_block != end_block:
-            block = data[:self.block_size]
-            i = len(block)
+        if start is not None:
+            block = self.storage[start[0]]
+            i = start[2] - start[1]
+            self.storage[start[0]] = block[:start[1]] + data[:i] + block[start[2]:]
         else:
-            block = self.storage[start_block]
-            if end_block == start_block:
-                i = len(data)
-                if self.size == offset + len(data):
-                    # Last block can be partial
-                    block = block[:start_pos] + data
-                else:
-                    block = block[:start_pos] + data + block[end_pos:]
-            else:
-                i = self.block_size - start_pos
-                block = block[:start_pos] + data[:i]
-        self.storage[start_block] = block
+            i = 0
 
         # Write intermediate blocks
-        for idx in xrange(start_block + 1, end_block):
-            self.storage[idx] = data[i:i+self.block_size]
-            i += self.block_size
+        if mid is not None:
+            for idx in xrange(*mid):
+                self.storage[idx] = data[i:i+self.block_size]
+                i += self.block_size
 
         # Write last block
-        if start_block != end_block:
-            if end_pos < self.block_size:
-                block = self.storage[end_block]
-                block = data[i:] + block[end_pos:]
-                self.storage[end_block] = block
-            else:
-                self.storage[end_block] = data[i:]
+        if end is not None:
+            block = self.storage[end[0]]
+            self.storage[end[0]] = data[i:] + block[end[1]:]
 
     def read(self, offset, length):
         length = max(0, min(self.size - offset, length))
         if length == 0:
             return b''
 
-        # Sanity check cache status
-        if self.pre_read(offset, length) is not None:
-            raise RuntimeError("attempt to read before caching")
-
         # Perform read
-        start_block, start_pos = divmod(offset, self.block_size)
-        end_block, end_pos = divmod(offset + length, self.block_size)
-        if end_pos == 0 and end_block > start_block:
-            end_block -= 1
-            end_pos = self.block_size
+        start, mid, end = block_range(offset, length, block_size=self.block_size)
 
         datas = []
 
         # Read first block
-        block = self.storage[start_block]
-        if end_block == start_block:
-            datas.append(block[start_pos:end_pos])
-        else:
-            datas.append(block[start_pos:])
+        if start is not None:
+            datas.append(self.storage[start[0]][start[1]:start[2]])
 
         # Read intermediate blocks
-        for idx in xrange(start_block+1, end_block):
-            datas.append(self.storage[idx])
+        if mid is not None:
+            for idx in xrange(*mid):
+                datas.append(self.storage[idx])
 
         # Read last block
-        if end_block != start_block:
-            datas.append(self.storage[end_block][:end_pos])
+        if end is not None:
+            datas.append(self.storage[end[0]][:end[1]])
 
         return b"".join(datas)
 
@@ -379,8 +311,16 @@ class BlockCachedFile(object):
         operation can be performed. There may be more than one fetch
         necessary. Return None if no fetch is necessary.
         """
-        start_block, end_block, _, _ = self._get_block_range(offset, length)
-        end_block = min(end_block, _ceildiv(self.cache_size, self.block_size))
+
+        # Limit to inside the cached area
+        cache_end = ceildiv(self.cache_size, self.block_size) * self.block_size
+        length = max(0, min(length, cache_end - offset))
+        if length == 0:
+            return None
+
+        # Find bounds of the read operation
+        start_block = offset//self.block_size
+        end_block = ceildiv(offset + length, self.block_size)
 
         # Combine consequent blocks into a single read
         j = max(start_block, self.first_uncached_block)
@@ -410,18 +350,13 @@ class BlockCachedFile(object):
         """
         Similarly to pre_read, but for write operations.
         """
-        start_block, end_block, start_skip, end_skip = self._get_block_range(offset, length)
+        start, mid, end = block_range(offset, length, block_size=self.block_size)
 
-        if start_block < end_block:
-            if (offset % self.block_size) != 0 and start_block not in self.storage:
-                start_pos = start_block * self.block_size
-                end_pos = (start_block + 1) * self.block_size
-                if start_pos < self.cache_size:
-                    return (start_pos, min(self.cache_size, end_pos) - start_pos)
-
-            if ((offset + length) % self.block_size) != 0 and end_block-1 not in self.storage:
-                start_pos = (end_block - 1) * self.block_size
-                end_pos = end_block * self.block_size
+        # Writes only need partially available blocks to be in the cache
+        for item in (start, end):
+            if item is not None and item[0] >= self.first_uncached_block and item[0] not in self.storage:
+                start_pos = item[0] * self.block_size
+                end_pos = (item[0] + 1) * self.block_size
                 if start_pos < self.cache_size:
                     return (start_pos, min(self.cache_size, end_pos) - start_pos)
 
@@ -449,3 +384,62 @@ class BlockCachedFileHandle(object):
 
     def read(self, size):
         return self.block_cached_file.read(self.pos, size)
+
+
+def block_range(offset, length, block_size, last_pos=None):
+    """
+    Get the blocks that overlap with data range [offset, offset+length]
+
+    Parameters
+    ----------
+    offset, length : int
+        Range specification
+    last_pos : int, optional
+        End-of-file position. If the data range goes over the end of the file,
+        the last block is the last block in `mid`, and `end` is None.
+
+    Returns
+    -------
+    start : (idx, start_pos, end_pos) or None
+        Partial block at the beginning; block[start_pos:end_pos] has the data. If missing: None
+    mid : (start_idx, end_idx)
+        Range [start_idx, end_idx) of full blocks in the middle. If missing: None
+    end : (idx, end_pos)
+        Partial block at the end; block[:end_pos] has the data. If missing: None
+
+    """
+    if last_pos is not None:
+        length = max(min(last_pos - offset, length), 0)
+
+    if length == 0:
+        return None, None, None
+
+    start_block, start_pos = divmod(offset, block_size)
+    end_block, end_pos = divmod(offset + length, block_size)
+
+    if last_pos is not None:
+        if offset + length == last_pos and end_pos > 0:
+            end_block += 1
+            end_pos = 0
+
+    if start_block == end_block:
+        if start_pos == end_pos:
+            return None, None, None
+        return (start_block, start_pos, end_pos), None, None
+
+    mid = None
+
+    if start_pos == 0:
+        start = None
+        mid = (start_block, end_block)
+    else:
+        start = (start_block, start_pos, block_size)
+        if start_block+1 < end_block:
+            mid = (start_block+1, end_block)
+
+    if end_pos == 0:
+        end = None
+    else:
+        end = (end_block, end_pos)
+
+    return start, mid, end
