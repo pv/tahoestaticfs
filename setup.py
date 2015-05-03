@@ -71,7 +71,7 @@ setup(
     name="tahoestaticfs",
     version=version,
     packages=find_packages(),
-    install_requires=['fuse-python>=0.2', 'cryptography>=0.5', 'nose>=1.0', 'numpy>=1.4'],
+    install_requires=['fuse-python>=0.2', 'cryptography>=0.5', 'nose>=1.0'],
     test_suite='nose.collector',
     entry_points={
         'console_scripts': [

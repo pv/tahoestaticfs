@@ -7,47 +7,8 @@ import array
 
 from nose.tools import assert_equal, assert_raises
 
-from tahoestaticfs.blockcache import BitArray, BlockCachedFile
+from tahoestaticfs.blockcache import BlockCachedFile, BlockStorage
 from tahoestaticfs.crypto import CryptFile
-
-
-class TestBitArray(object):
-    def test_basics(self):
-        b = BitArray(0)
-        assert_raises(IndexError, b.__getitem__, 0)
-
-        b = BitArray(2)
-        assert_equal(b[0], False)
-        assert_equal(b[1], False)
-        assert_raises(IndexError, b.__getitem__, 2)
-        b[0] = 1
-        assert_equal(b[0], True)
-        assert_equal(b[1], False)
-        b[1] = 1
-        assert_equal(b[0], True)
-        assert_equal(b[1], True)
-        b[0] = 0
-        assert_equal(b[0], False)
-        assert_equal(b[1], True)
-
-        b = BitArray(31)
-        b[7] = 1
-        assert_equal(repr(b), "<Bitarray '0000000100000000000000000000000'>")
-        b[8] = 1
-        assert_equal(repr(b), "<Bitarray '0000000110000000000000000000000'>")
-        b[9] = 1
-        assert_equal(repr(b), "<Bitarray '0000000111000000000000000000000'>")
-        b[8] = 0
-        assert_equal(repr(b), "<Bitarray '0000000101000000000000000000000'>")
-
-    def test_serialize(self):
-        random.seed(1234)
-        b = BitArray(31)
-        for j in range(31):
-            b[j] = random.randint(0, 1)
-        s = b.to_bytes()
-        b2 = BitArray.from_bytes(s)
-        assert_equal(repr(b), repr(b2))
 
 
 class TestBlockCachedFile(object):
@@ -216,3 +177,44 @@ class TestBlockCachedFile(object):
         for k in range(3):
             file_size = self._do_random_rw(f, sim_data, file_size, max_file_size, count=15)
         f.close()
+
+
+class TestBlockStorage(object):
+    def test_basic(self):
+        tmpf = tempfile.TemporaryFile()
+        statef = tempfile.TemporaryFile()
+
+        f = BlockStorage(tmpf, block_size=7)
+
+        # Missing blocks
+        assert_raises(KeyError, f.__getitem__, 0)
+        assert_raises(KeyError, f.__getitem__, 1)
+
+        # Basic block storage
+        block_1 = b"\x01"*7
+        block_2 = b"\x02"*7
+
+        f[0] = block_1
+        f[1] = block_2
+
+        assert_equal(f[0], block_1)
+        assert_equal(f[1], block_2)
+
+        # Sparse zero blocks
+        f[1] = None
+        assert_equal(f[1], b"\x00"*7)
+        f[1] = block_2
+
+        # Implicit null padding
+        f[2] = b'abc'
+        assert_equal(f[2], b"abc\x00\x00\x00\x00")
+        f[3] = b'cba'
+        assert_equal(f[3], b"cba\x00\x00\x00\x00")
+
+        # Save-restore cycle
+        f[2] = block_2
+        f.save_state(statef)
+        statef.seek(0)
+        f = BlockStorage.restore_state(tmpf, statef)
+        assert_equal(f[0], block_1)
+        assert_equal(f[2], block_2)
