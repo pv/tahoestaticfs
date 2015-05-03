@@ -410,7 +410,7 @@ class BlockCachedFileHandle(object):
         self.block_cached_file = block_cached_file
         self.pos = 0
 
-    def seek(self, offset, whence):
+    def seek(self, offset, whence=0):
         if whence == 0:
             self.pos = offset
         elif whence == 1:
@@ -420,8 +420,12 @@ class BlockCachedFileHandle(object):
         else:
             raise ValueError("Invalid whence")
 
-    def read(self, size):
-        return self.block_cached_file.read(self.pos, size)
+    def read(self, size=None):
+        if size is None:
+            size = max(0, self.block_cached_file.get_size() - self.pos)
+        data = self.block_cached_file.read(self.pos, size)
+        self.pos += len(data)
+        return data
 
 
 def block_range(offset, length, block_size, last_pos=None):

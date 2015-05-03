@@ -203,6 +203,19 @@ class TestBlockCachedFile(object):
             file_size = self._do_random_rw(f, sim_data, file_size, max_file_size, count=15)
         f.close()
 
+    def test_get_file(self):
+        tmpf = tempfile.TemporaryFile()
+        f = BlockCachedFile(tmpf, len(self.cache_data), block_size=37)
+        self._do_write(f, 17, b'abc'*12)
+
+        f2 = f.get_file()
+        f2.seek(17)
+        assert_equal(f2.read(3*12), b'abc'*12)
+        assert_equal(f2.read(7), self.cache_data[17+3*12:17+3*12+7])
+
+        self._do_read(f, 0, len(self.cache_data))
+        assert_equal(f2.read(), self.cache_data[17+3*12+7:])
+
 
 class TestBlockStorage(object):
     def test_basic(self):
