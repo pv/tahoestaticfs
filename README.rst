@@ -116,9 +116,6 @@ using AES-CBC-256 separately for each chunk, to enable random
 access. The 16-byte IV for each chunk is random, and changed every
 time the chunk is written on disk.
 
-File sizes are exposed in plaintext; other metadata is encrypted.  All
-other data is also encrypted, including temporary files.
-
 A 256-bit master encryption key is derived from the rootcap mounted,
 combined with a randomly chosen 32-byte salt via PBKDF2. The iteration
 count is determined so that it takes around one second on the system

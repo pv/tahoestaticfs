@@ -144,3 +144,19 @@ class TestCryptFile(object):
         f.close()
 
         assert_equal(data, last_data[0])
+
+    def test_data_sizes(self):
+        key = b"a"*32
+
+        for data_size in range(5*32):
+            data = os.urandom(data_size)
+
+            f = CryptFile(self.file_name, key=key, mode='w+b', block_size=32)
+            f.write(data)
+            f.close()
+
+            f = CryptFile(self.file_name, key=key, mode='rb', block_size=32)
+            data2 = f.read()
+            f.close()
+
+            assert_equal(data2, data, repr((data, data_size)))

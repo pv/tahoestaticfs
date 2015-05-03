@@ -23,7 +23,7 @@ class CryptFile(object):
     """
 
     IV_SIZE = 16
-    HEADER_SIZE = 8
+    HEADER_SIZE = IV_SIZE + 16
 
     def __init__(self, path, key, mode='r+b', block_size=BLOCK_SIZE):
         self.key = None
@@ -69,18 +69,53 @@ class CryptFile(object):
         if mode == 'w+b':
             self.data_size = 0
         else:
+            # Read header
             try:
-                sz = self.fp.read(8)
-                self.data_size = struct.unpack('<Q', sz)[0]
-            except (IOError, struct.error):
+                iv = self.fp.read(self.IV_SIZE)
+                if len(iv) != self.IV_SIZE:
+                    raise ValueError()
+
+                cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv), backend=backend)
+                decryptor = cipher.decryptor()
+
+                ciphertext = self.fp.read(16)
+                if len(ciphertext) != 16:
+                    raise ValueError()
+                data = decryptor.update(ciphertext) + decryptor.finalize()
+                self.data_size = struct.unpack('<Q', data[8:])[0]
+
+                # Check the data size is OK
+                self.fp.seek(0, 2)
+                file_size = self.fp.tell()
+                num_blocks, remainder = divmod(file_size - self.HEADER_SIZE, self.IV_SIZE + block_size)
+                if remainder > 0:
+                    num_blocks += 1
+                if self.data_size == 0 and num_blocks == 1:
+                    # Zero-size files can contain 0 or 1 data blocks
+                    num_blocks = 0
+                if not ((num_blocks-1)*block_size < self.data_size <= num_blocks*block_size):
+                    raise ValueError()
+            except (IOError, struct.error, ValueError):
                 self.fp.close()
-                raise ValueError("invalid data in file")
+                raise ValueError("invalid header data in file")
 
         self.current_block = -1
         self.block_cache = b""
         self.block_dirty = False
 
         self.offset = 0
+
+    def _write_header(self):
+        iv = os.urandom(self.IV_SIZE)
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv), backend=backend)
+        encryptor = cipher.encryptor()
+
+        self.fp.seek(0)
+        self.fp.write(iv)
+
+        data = os.urandom(8) + struct.pack("<Q", self.data_size)
+        self.fp.write(encryptor.update(data))
+        self.fp.write(encryptor.finalize())
 
     def _flush_block(self):
         if self.current_block < 0:
@@ -260,8 +295,7 @@ class CryptFile(object):
     def flush(self):
         if self.mode != 'rb':
             self._flush_block()
-            self.fp.seek(0)
-            self.fp.write(struct.pack("<Q", self.data_size))
+            self._write_header()
         self.fp.flush()
 
     def close(self):
