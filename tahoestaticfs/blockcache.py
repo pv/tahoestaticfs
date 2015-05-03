@@ -121,7 +121,7 @@ class BlockStorage(object):
         if not idx >= 0:
             raise ValueError("Invalid block index")
         if idx >= len(self.block_map):
-            self.block_map.extend([BLOCK_UNALLOCATED]*(idx+1 - len(self.block_map)))
+            self.block_map.extend(itertools.repeat(BLOCK_UNALLOCATED, idx + 1 - len(self.block_map)))
 
         if data is None or data == self.zero_block:
             block_idx = self.block_map[idx]
