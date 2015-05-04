@@ -2,6 +2,7 @@ import struct
 import errno
 import array
 import heapq
+import zlib
 import itertools
 
 
@@ -31,8 +32,15 @@ class BlockStorage(object):
         f.truncate(0)
         f.seek(0)
         f.write(b"BLK2")
-        f.write(struct.pack('<Qq', self.block_size, len(self.block_map)))
-        f.write(self.block_map.tostring())
+
+        # Using zlib here is mainly for obfuscating information on the
+        # total size of sparse files. The size of the map file will
+        # correlate with the amount of downloaded data, but
+        # compression reduces its correlation with the total size of
+        # the file.
+        block_map_data = zlib.compress(self.block_map.tostring(), 9)
+        f.write(struct.pack('<QQ', self.block_size, len(block_map_data)))
+        f.write(block_map_data)
 
     @classmethod
     def restore_state(cls, f, state_file):
@@ -40,11 +48,15 @@ class BlockStorage(object):
         if hdr != b"BLK2":
             raise ValueError("invalid block storage state file")
         s = state_file.read(2 * 8)
-        block_size, num_blocks = struct.unpack('<Qq', s)
+        block_size, data_size = struct.unpack('<QQ', s)
 
+        try:
+            s = zlib.decompress(state_file.read(data_size))
+        except zlib.error:
+            raise ValueError("invalid block map data")
         block_map = array.array('l')
-        s = state_file.read(num_blocks * block_map.itemsize)
         block_map.fromstring(s)
+        del s
 
         self = cls.__new__(cls)
         self.f = f
