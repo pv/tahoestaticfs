@@ -73,6 +73,7 @@ setup(
     packages=find_packages(),
     install_requires=['fuse-python>=0.2', 'cryptography>=0.5', 'nose>=1.0'],
     test_suite='nose.collector',
+    package_data={'tahoestaticfs': ['tests/*.py']},
     entry_points={
         'console_scripts': [
             'tahoestaticfs = tahoestaticfs.cli:main',
