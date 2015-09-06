@@ -320,8 +320,8 @@ class CacheDB(object):
                 upath_cap = parent_cap + u'/' + ubasename(upath)
                 try:
                     cap = io.delete(upath_cap, iscap=True)
-                except HTTPError, err:
-                    if err.code == 404:
+                except (HTTPError, IOError) as err:
+                    if isinstance(err, HTTPError) and err.code == 404:
                         raise IOError(errno.ENOENT, "no such file")
                     raise IOError(errno.EREMOTEIO, "failed to retrieve information")
 
@@ -343,7 +343,7 @@ class CacheDB(object):
                 # Check that the target does not exist
                 try:
                     parent.get_child_attr(ubasename(upath))
-                except IOError, err:
+                except IOError as err:
                     if err.errno == errno.ENOENT:
                         pass
                     else:
@@ -358,7 +358,7 @@ class CacheDB(object):
                 upath_cap = parent_cap + u'/' + ubasename(upath)
                 try:
                     cap = io.mkdir(upath_cap, iscap=True)
-                except HTTPError, err:
+                except (HTTPError, IOError) as err:
                     raise IOError(err.EREMOTEIO, "remote operation failed")
 
                 # Add in cache
@@ -379,7 +379,7 @@ class CacheDB(object):
             dir = self.open_dir(upath_parent, io)
             try:
                 info = dir.get_child_attr(ubasename(upath))
-            except IOError, err:
+            except IOError as err:
                 with self.lock:
                     if err.errno == errno.ENOENT and upath in self.open_items:
                         # New file that has not yet been uploaded
@@ -445,7 +445,7 @@ class CacheDB(object):
             if f is None:
                 try:
                     cap = self._lookup_cap(upath, io, lifetime=lifetime)
-                except IOError, err:
+                except IOError as err:
                     if err.errno == errno.ENOENT and creat:
                         cap = None
                     else:
@@ -727,7 +727,7 @@ class CachedFileInode(object):
                     else:
                         self.info = ['file', {u'size': 0}]
                         self.dirty = True
-                except IOError, err:
+                except IOError as err:
                     os.unlink(filename)
                     self.f.close()
                     raise
@@ -748,7 +748,7 @@ class CachedFileInode(object):
     def _load_info(self, upath, io, iscap=False):
         try:
             self.info = io.get_info(upath, iscap=iscap)
-        except (HTTPError, ValueError), err:
+        except (HTTPError, IOError, ValueError) as err:
             if isinstance(err, HTTPError) and err.code == 404:
                 raise IOError(errno.ENOENT, "no such file")
             raise IOError(errno.EREMOTEIO, "failed to retrieve information")
@@ -858,7 +858,7 @@ class CachedFileInode(object):
                         self.stream_offset, self.stream_data = self.block_cache.receive_cached_data(
                             self.stream_offset, self.stream_data)
 
-        except HTTPError, err: 
+        except (HTTPError, IOError) as err:
             if self.stream_f is not None:
                 self.stream_f.close()
             self.stream_f = None
@@ -922,7 +922,7 @@ class CachedFileInode(object):
             fw = Fwrapper(self.block_cache)
             try:
                 filecap = io.put_file(upath, fw, iscap=iscap)
-            except HTTPError, err:
+            except (HTTPError, IOError) as err:
                 raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
 
             self.info[1][u'ro_uri'] = filecap
@@ -973,7 +973,7 @@ class CachedDirInode(object):
                 self.info = io.get_info(upath)
             self.info[1][u'retrieved'] = time.time()
             json_zlib_dump(self.info, f)
-        except (HTTPError, ValueError):
+        except (HTTPError, IOError, ValueError):
             os.unlink(self.filename)
             raise IOError(errno.EREMOTEIO, "failed to retrieve information")
         finally:
