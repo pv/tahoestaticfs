@@ -20,23 +20,15 @@ def ioerrwrap(func):
         try:
             return func(*a, **kw)
         except (IOError, OSError), e:
-            # Unexpected error condition: print traceback
             with print_lock:
-                msg = "\n".join(["-"*80,
-                                 traceback.format_exc(),
-                                 "-"*80])
-                logging.debug(msg)
+                logging.debug("Failed operation", exc_info=True)
             if hasattr(e, 'errno') and isinstance(e.errno, int):
                 # Standard operation
                 return -e.errno
             return -errno.EACCES
         except:
-            # Unexpected error condition: print traceback
             with print_lock:
-                msg = "\n".join(["-"*80,
-                                 traceback.format_exc(),
-                                 "-"*80])
-                logging.warning(msg)
+                logging.warning("Unexpected exception", exc_info=True)
             return -errno.EIO
 
     wrapper.__name__ = func.__name__
@@ -112,7 +104,9 @@ class TahoeStaticFS(fuse.Fuse):
             print("error: --timeout %r is not a valid timeout" % (options.timeout,))
             sys.exit(1)
 
-        logging.basicConfig(level=log_level)
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s [tahoestaticfs %(process)d:%(thread)d] %(levelname)s %(message)s")
 
         rootcap = raw_input('Root dircap: ').strip()
 
