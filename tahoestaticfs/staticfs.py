@@ -55,6 +55,10 @@ class TahoeStaticFS(fuse.Fuse):
                                help="Cache lifetime for write operations (seconds). Default: 10 sec")
         self.parser.add_option('-r', '--read-cache-lifetime', dest='read_lifetime', default='10',
                                help="Cache lifetime for read operations (seconds). Default: 10 sec")
+        self.parser.add_option('-l', '--log-level', dest='log_level', default='warning',
+                               help="Log level (error, warning, info, debug). Default: warning")
+        self.parser.add_option('-t', '--timeout', dest='timeout', default='30',
+                               help="Network timeout. Default: 30s")
 
     def main(self, args=None):
         if not self.fuse_args.mount_expected():
@@ -65,19 +69,15 @@ class TahoeStaticFS(fuse.Fuse):
         if options.cache is None:
             print("error: --cache not specified")
             sys.exit(1)
+
         if options.node_url is None:
             print("error: --node-url not specified")
             sys.exit(1)
 
-        if not os.path.isdir(options.cache):
-            os.makedirs(options.cache)
-
-        rootcap = raw_input('Root dircap: ').strip()
-
         try:
-            rootcap = rootcap.decode('ascii')
-        except UnicodeError:
-            print("error: invalid rootcap (non-ascii characters)")
+            log_level = parse_log_level(options.log_level)
+        except ValueError:
+            print("error: --log-level %r is not a valid log level" % (options.log_level,))
             sys.exit(1)
 
         try:
@@ -90,23 +90,47 @@ class TahoeStaticFS(fuse.Fuse):
             cache_size = parse_size(options.cache_size)
         except ValueError:
             print("error: --cache-size %r is not a valid size specifier" % (options.cache_size,))
+            sys.exit(1)
 
         try:
             read_lifetime = parse_lifetime(options.read_lifetime)
         except ValueError:
             print("error: --read-cache-lifetime %r is not a valid lifetime" % (options.read_lifetime,))
+            sys.exit(1)
 
         try:
             write_lifetime = parse_lifetime(options.write_lifetime)
         except ValueError:
             print("error: --write-cache-lifetime %r is not a valid lifetime" % (options.write_lifetime,))
+            sys.exit(1)
+
+        try:
+            timeout = float(options.timeout)
+            if not 0 < timeout < float('inf'):
+                raise ValueError()
+        except ValueError:
+            print("error: --timeout %r is not a valid timeout" % (options.timeout,))
+            sys.exit(1)
+
+        logging.basicConfig(level=log_level)
+
+        rootcap = raw_input('Root dircap: ').strip()
+
+        try:
+            rootcap = rootcap.decode('ascii')
+        except UnicodeError:
+            print("error: invalid rootcap (non-ascii characters)")
+            sys.exit(1)
+
+        if not os.path.isdir(options.cache):
+            os.makedirs(options.cache)
 
         self.cache = CacheDB(options.cache, rootcap, node_url,
                              cache_size=cache_size, 
                              cache_data=options.cache_data,
                              read_lifetime=read_lifetime,
                              write_lifetime=write_lifetime)
-        self.io = TahoeConnection(node_url, rootcap)
+        self.io = TahoeConnection(node_url, rootcap, timeout)
 
         fuse.Fuse.main(self, args)
 
@@ -267,3 +291,13 @@ def parse_lifetime(lifetime_str):
         return int(lifetime_str)
     except ValueError:
         raise ValueError("invalid lifetime specifier")
+
+
+def parse_log_level(log_level):
+    try:
+        return {'error': logging.ERROR,
+                'warning': logging.WARNING,
+                'info': logging.INFO,
+                'debug': logging.DEBUG}[log_level]
+    except KeyError:
+        raise ValueError("invalid log level specifier")

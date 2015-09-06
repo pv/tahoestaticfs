@@ -5,9 +5,9 @@ import shutil
 
 
 class TahoeResponse(object):
-    def __init__(self, connection, req, is_put):
+    def __init__(self, connection, req, is_put, timeout):
         self.connection = connection
-        self.response = urlopen(req)
+        self.response = urlopen(req, timeout=timeout)
         self.is_put = is_put
 
     def read(self, size=None):
@@ -19,7 +19,7 @@ class TahoeResponse(object):
 
 
 class TahoeConnection(object):
-    def __init__(self, base_url, rootcap, max_connections=10):
+    def __init__(self, base_url, rootcap, timeout, max_connections=10):
         assert isinstance(base_url, unicode)
         assert isinstance(rootcap, unicode)
 
@@ -34,13 +34,14 @@ class TahoeConnection(object):
 
         self.get_semaphore = threading.Semaphore(get_conns)
         self.put_semaphore = threading.Semaphore(put_conns)
+        self.timeout = timeout
 
     def _get_response(self, req, is_put):
         semaphore = self.put_semaphore if is_put else self.get_semaphore
 
         semaphore.acquire()
         try:
-            response = TahoeResponse(self, req, is_put)
+            response = TahoeResponse(self, req, is_put, self.timeout)
             with self.lock:
                 self.connections.append(response)
                 return response
