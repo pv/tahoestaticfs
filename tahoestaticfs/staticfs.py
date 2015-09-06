@@ -6,6 +6,7 @@ import stat
 import traceback
 import threading
 import logging
+import logging.handlers
 
 import fuse
 
@@ -21,7 +22,10 @@ def ioerrwrap(func):
             return func(*a, **kw)
         except (IOError, OSError), e:
             with print_lock:
-                logging.debug("Failed operation", exc_info=True)
+                if isinstance(e, IOError) and getattr(e, 'errno', None) == errno.ENOENT:
+                    logging.debug("Failed operation", exc_info=True)
+                else:
+                    logging.info("Failed operation", exc_info=True)
             if hasattr(e, 'errno') and isinstance(e.errno, int):
                 # Standard operation
                 return -e.errno
@@ -104,9 +108,21 @@ class TahoeStaticFS(fuse.Fuse):
             print("error: --timeout %r is not a valid timeout" % (options.timeout,))
             sys.exit(1)
 
-        logging.basicConfig(
-            level=log_level,
-            format="%(asctime)s [tahoestaticfs %(process)d:%(thread)d] %(levelname)s %(message)s")
+        logger = logging.getLogger('')
+        if self.fuse_args.modifiers.get('foreground'):
+            # console logging only
+            handler = logging.StreamHandler()
+            fmt = logging.Formatter(fmt=("%(asctime)s tahoestaticfs[%(process)d]: " +
+                                         self.fuse_args.mountpoint + " %(levelname)s: %(message)s"))
+        else:
+            # to syslog
+            handler = logging.handlers.SysLogHandler(address='/dev/log')
+            fmt = logging.Formatter(fmt=("tahoestaticfs[%(process)d]: " +
+                                         self.fuse_args.mountpoint + ": %(levelname)s: %(message)s"))
+
+        handler.setFormatter(fmt)
+        logger.addHandler(handler)
+        logger.setLevel(log_level)
 
         rootcap = raw_input('Root dircap: ').strip()
 
