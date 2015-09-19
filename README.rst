@@ -124,9 +124,9 @@ in question, but is at least 10000. The salt is stored on-disk as-is.
 The AES encryption keys are file-specific, and obtained via::
 
     prk = HKDF-SHA256-Extract(salt2, master-key)
-    data_key | fn_key = HKDF-SHA256-Expand(prk, pathname, 64)
+    data_key | fn_key = HKDF-SHA256-Expand(prk, pathname, 96)
 
 The salt2 is a second 32-byte randomly generated salt stored as-is
 on-disk.  The 32-byte data_key is used as the AES-CBC encryption key.
-The 32-byte fn_key is used to generate filenames via
+The 64-byte fn_key is used to generate filenames via
 HMAC-SHA512(fn_key, pathname).
