@@ -46,10 +46,6 @@ class CacheDB(object):
         # Open files and dirs
         self.open_items = {}
 
-        # Remove dead files
-        with self.lock:
-            self._cleanup()
-
         # Restrict cache size
         self._restrict_size()
 
@@ -163,22 +159,6 @@ class CacheDB(object):
                     for ext in (None, b'state', b'data'):
                         c_fn, c_key = self.get_filename_and_key(c_upath, ext=ext)
                         yield (os.path.basename(c_fn), c_upath)
-
-    def _cleanup(self):
-        """
-        Walk through the cached directory tree, and remove files not
-        reachable from the root.
-        """
-        alive_file_set = set()
-        for fn, upath in self._walk_cache_subtree():
-            alive_file_set.add(fn)
-
-        for basename in os.listdir(self.path):
-            if basename == 'salt':
-                continue
-            fn = os.path.join(self.path, basename)
-            if basename not in alive_file_set and os.path.isfile(fn):
-                os.unlink(fn)
 
     def _restrict_size(self):
         def get_cache_score(entry):
