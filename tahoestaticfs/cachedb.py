@@ -339,7 +339,7 @@ class CacheDB(object):
                 try:
                     cap = io.mkdir(upath_cap, iscap=True)
                 except (HTTPError, IOError) as err:
-                    raise IOError(err.EREMOTEIO, "remote operation failed")
+                    raise IOError(errno.EREMOTEIO, "remote operation failed: {0}".format(err))
 
                 # Add in cache
                 parent.inode.cache_add_child(ubasename(upath), cap, size=None)
