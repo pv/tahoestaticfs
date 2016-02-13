@@ -232,7 +232,8 @@ class CryptFile(object):
 
         # Write full blocks
         for i in range(start_block, end_block):
-            self._flush_block()
+            if self.current_block != i:
+                self._flush_block()
             self.current_block = i
             self.block_cache = data[k*self.block_size-start_off:(k+1)*self.block_size-start_off]
             self.block_dirty = True
