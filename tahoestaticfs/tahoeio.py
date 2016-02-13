@@ -2,12 +2,34 @@ from urllib2 import Request, urlopen, quote, HTTPError
 import json
 import threading
 import shutil
+import logging
 
 
 class TahoeResponse(object):
     def __init__(self, connection, req, is_put, timeout):
         self.connection = connection
-        self.response = urlopen(req, timeout=timeout)
+
+        # XXX: We use default timeout for PUT requests, for now:
+        #      Solution would be to limit send buffer size, but urllib2
+        #      doesn't easily allow this. Switching to requests module probably
+        #      would help.
+        #
+        # We recv data in relatively small blocks, so that blocking
+        # for recv corresponds roughly to network activity. POST
+        # requests are also small, so that the situation is the same.
+        #
+        # However, PUT requests may upload large amounts of data. The
+        # send buffer can also be fairly large, so that all the data
+        # may fit into it. In this case, we end up blocking on reading
+        # the server response, which arrives only after the data in
+        # the buffer is sent. In this case, timeout can arrive even if
+        # the computer is still successfully uploading data ---
+        # blocking does not correspond to network activity.
+        #
+        if is_put:
+            self.response = urlopen(req)
+        else:
+            self.response = urlopen(req, timeout=timeout)
         self.is_put = is_put
 
     def read(self, size=None):
