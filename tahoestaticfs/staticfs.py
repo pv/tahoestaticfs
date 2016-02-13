@@ -177,6 +177,7 @@ class TahoeStaticFS(fuse.Fuse):
     def release(self, path, flags, f):
         upath = self.cache.get_upath(path)
         try:
+            # XXX: if it fails, silent data loss (apart from logs)
             self.cache.upload_file(f, self.io)
             return 0
         finally:

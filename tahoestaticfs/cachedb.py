@@ -266,7 +266,14 @@ class CacheDB(object):
                 parent_cap = parent.inode.info[1][u'rw_uri']
 
                 # Upload
-                cap = c.upload(io, parent_cap=parent_cap)
+                try:
+                    cap = c.upload(io, parent_cap=parent_cap)
+                except:
+                    # Failure to upload --- need to invalidate parent
+                    # directory, since the file might not have been
+                    # created.
+                    self.invalidate(parent.upath, shallow=True)
+                    raise
 
                 # Add in cache
                 with self.lock:
@@ -890,7 +897,7 @@ class CachedFileInode(object):
                 def __len__(self):
                     return self.size
                 def read(self, size):
-                   return self.f.read(size)
+                    return self.f.read(size)
 
             if parent_cap is None:
                 upath = self.upath
