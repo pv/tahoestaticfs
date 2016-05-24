@@ -3,7 +3,6 @@ Cache metadata and data of a directory tree for read-only access.
 """
 
 import os
-import sys
 import time
 import json
 import zlib
@@ -354,7 +353,6 @@ class CacheDB(object):
                 self.close_dir(parent)
 
     def get_attr(self, upath, io):
-        import sys
         if upath == u'':
             dir = self.open_dir(upath, io)
             try:
@@ -669,6 +667,7 @@ class CachedFileInode(object):
         filename_data, key_data = cachedb.get_filename_and_key(upath, b'data')
 
         self.lock = threading.RLock()
+        self.cache_lock = threading.RLock()
         self.dirty = False
         self.f = None
         self.f_state = None
@@ -754,17 +753,17 @@ class CachedFileInode(object):
         return (self.info[1][u'retrieved'] + lifetime >= time.time())
 
     def incref(self):
-        with self.lock:
+        with self.cache_lock:
             self.refcnt += 1
 
     def decref(self):
-        with self.lock:
+        with self.cache_lock:
             self.refcnt -= 1
             if self.refcnt <= 0:
                 self.close()
 
     def close(self):
-        with self.lock:
+        with self.cache_lock, self.lock:
             if not self.closed:
                 if self.stream_f is not None:
                     self.stream_f.close()
@@ -789,10 +788,8 @@ class CachedFileInode(object):
         else:
             length = length_or_data
 
-        self.lock.acquire()
-        try:
-            preempted = False
-            while True:
+        while True:
+            with self.cache_lock:
                 if write:
                     pos = self.block_cache.pre_write(offset, length)
                 else:
@@ -806,21 +803,14 @@ class CachedFileInode(object):
                         return self.block_cache.write(offset, data)
                     else:
                         return self.block_cache.read(offset, length)
-                else:
-                    # cache not ready -- fill it up
+
+            # cache not ready -- fill it up
+            with self.lock:
+                try:
                     c_offset, c_length = pos
 
                     if self.stream_f is not None and (self.stream_offset > c_offset or
                                                       c_offset >= self.stream_offset + 3*131072):
-                        if not preempted:
-                            # Try to yield to a different in-flight cache operation, in case there
-                            # is one waiting for the lock
-                            preempted = True
-                            self.lock.release()
-                            time.sleep(0)
-                            self.lock.acquire()
-                            continue
-
                         self.stream_f.close()
                         self.stream_f = None
                         self.stream_data = []
@@ -834,6 +824,7 @@ class CachedFileInode(object):
                     read_bytes = sum(len(x) for x in self.stream_data)
                     while read_offset + read_bytes < c_offset + c_length:
                         block = self.stream_f.read(131072)
+
                         if not block:
                             self.stream_f.close()
                             self.stream_f = None
@@ -842,19 +833,19 @@ class CachedFileInode(object):
 
                         self.stream_data.append(block)
                         read_bytes += len(block)
-                        self.stream_offset, self.stream_data = self.block_cache.receive_cached_data(
-                            self.stream_offset, self.stream_data)
 
-        except (HTTPError, IOError) as err:
-            if self.stream_f is not None:
-                self.stream_f.close()
-            self.stream_f = None
-            raise IOError(errno.EREMOTEIO, "I/O error: %s" % (str(err),))
-        finally:
-            self.lock.release()
+                        with self.cache_lock:
+                            self.stream_offset, self.stream_data = self.block_cache.receive_cached_data(
+                                self.stream_offset, self.stream_data)
+                except (HTTPError, IOError) as err:
+                    if self.stream_f is not None:
+                        self.stream_f.close()
+                    self.stream_f = None
+                    raise IOError(errno.EREMOTEIO, "I/O error: %s" % (str(err),))
 
     def get_size(self):
-        return self.block_cache.get_size()
+        with self.cache_lock:
+            return self.block_cache.get_size()
 
     def get_attr(self):
         return dict(type='file', size=self.get_size())
@@ -874,16 +865,17 @@ class CachedFileInode(object):
                 self._do_rw(io, offset, data, write=True)
 
     def truncate(self, size):
-        with self.lock:
+        with self.cache_lock, self.lock:
             if size != self.block_cache.get_size():
                 self.dirty = True
             self.block_cache.truncate(size)
 
     def _buffer_whole_file(self, io):
-        self._do_rw(io, 0, self.block_cache.get_size(), write=False, no_result=True)
+        with self.cache_lock:
+            self._do_rw(io, 0, self.block_cache.get_size(), write=False, no_result=True)
 
     def upload(self, io, parent_cap=None):
-        with self.lock:
+        with self.cache_lock, self.lock:
             # Buffer all data
             self._buffer_whole_file(io)
 
@@ -921,7 +913,7 @@ class CachedFileInode(object):
             return filecap
 
     def unlink(self):
-        with self.lock:
+        with self.cache_lock, self.lock:
             if self.upath is not None and not self.invalidated:
                 os.unlink(self.f.path)
                 os.unlink(self.f_state.path)
