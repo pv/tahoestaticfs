@@ -20,7 +20,7 @@ def ioerrwrap(func):
     def wrapper(*a, **kw):
         try:
             return func(*a, **kw)
-        except (IOError, OSError), e:
+        except (IOError, OSError) as e:
             with print_lock:
                 if isinstance(e, IOError) and getattr(e, 'errno', None) == errno.ENOENT:
                     logging.debug("Failed operation", exc_info=True)
@@ -73,7 +73,7 @@ class TahoeStaticFS(fuse.Fuse):
         try:
             log_level = parse_log_level(options.log_level)
         except ValueError:
-            print("error: --log-level %r is not a valid log level" % (options.log_level,))
+            print(("error: --log-level %r is not a valid log level" % (options.log_level,)))
             sys.exit(1)
 
         try:
@@ -85,19 +85,19 @@ class TahoeStaticFS(fuse.Fuse):
         try:
             cache_size = parse_size(options.cache_size)
         except ValueError:
-            print("error: --cache-size %r is not a valid size specifier" % (options.cache_size,))
+            print(("error: --cache-size %r is not a valid size specifier" % (options.cache_size,)))
             sys.exit(1)
 
         try:
             read_lifetime = parse_lifetime(options.read_lifetime)
         except ValueError:
-            print("error: --read-cache-lifetime %r is not a valid lifetime" % (options.read_lifetime,))
+            print(("error: --read-cache-lifetime %r is not a valid lifetime" % (options.read_lifetime,)))
             sys.exit(1)
 
         try:
             write_lifetime = parse_lifetime(options.write_lifetime)
         except ValueError:
-            print("error: --write-cache-lifetime %r is not a valid lifetime" % (options.write_lifetime,))
+            print(("error: --write-cache-lifetime %r is not a valid lifetime" % (options.write_lifetime,)))
             sys.exit(1)
 
         try:
@@ -105,7 +105,7 @@ class TahoeStaticFS(fuse.Fuse):
             if not 0 < timeout < float('inf'):
                 raise ValueError()
         except ValueError:
-            print("error: --timeout %r is not a valid timeout" % (options.timeout,))
+            print(("error: --timeout %r is not a valid timeout" % (options.timeout,)))
             sys.exit(1)
 
         logger = logging.getLogger('')
@@ -124,7 +124,7 @@ class TahoeStaticFS(fuse.Fuse):
         logger.addHandler(handler)
         logger.setLevel(log_level)
 
-        rootcap = raw_input('Root dircap: ').strip()
+        rootcap = input('Root dircap: ').strip()
 
         try:
             rootcap = rootcap.decode('ascii')
@@ -168,7 +168,7 @@ class TahoeStaticFS(fuse.Fuse):
     def open(self, path, flags):
         upath = self.cache.get_upath(path)
         basename = os.path.basename(upath)
-        if basename == u'.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
+        if basename == '.tahoestaticfs-invalidate' and (flags & os.O_CREAT):
             self.cache.invalidate(os.path.dirname(upath))
             return -errno.EACCES
         return self.cache.open_file(upath, self.io, flags)
@@ -229,7 +229,7 @@ class TahoeStaticFS(fuse.Fuse):
             st = fuse.Stat()
             st.st_mode = stat.S_IFDIR | stat.S_IRUSR | stat.S_IXUSR
             st.st_nlink = 1
-        elif info['type'] == u'file':
+        elif info['type'] == 'file':
             st = fuse.Stat()
             st.st_mode = stat.S_IFREG | stat.S_IRUSR | stat.S_IWUSR
             st.st_nlink = 1
@@ -276,7 +276,7 @@ def parse_size(size_str):
         'mib': 1024**2,
         'kib': 1024**1,
     }
-    size_re = re.compile(r'^\s*(\d+)\s*(%s)?\s*$' % ("|".join(multipliers.keys()),), 
+    size_re = re.compile(r'^\s*(\d+)\s*(%s)?\s*$' % ("|".join(list(multipliers.keys())),), 
                          re.I)
 
     m = size_re.match(size_str)

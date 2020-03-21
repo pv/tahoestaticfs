@@ -1,4 +1,6 @@
-from urllib2 import Request, urlopen, quote, HTTPError
+from urllib.request import Request, urlopen
+from urllib.parse import quote
+from urllib.error import HTTPError
 import json
 import threading
 import shutil
@@ -42,8 +44,8 @@ class TahoeResponse(object):
 
 class TahoeConnection(object):
     def __init__(self, base_url, rootcap, timeout, max_connections=10):
-        assert isinstance(base_url, unicode)
-        assert isinstance(rootcap, unicode)
+        assert isinstance(base_url, str)
+        assert isinstance(rootcap, str)
 
         self.base_url = (base_url.rstrip('/') + '/uri').encode('utf-8')
         self.rootcap = rootcap.encode('utf-8')
@@ -85,7 +87,7 @@ class TahoeConnection(object):
         self.put_semaphore.release()
 
     def _url(self, path, params={}, iscap=False):
-        assert isinstance(path, unicode), path
+        assert isinstance(path, str), path
 
         path = path.encode('utf-8')
         path = quote(path).lstrip(b'/')
@@ -97,9 +99,9 @@ class TahoeConnection(object):
         if params:
             path += b'?'
 
-            for k, v in params.items():
-                assert isinstance(k, unicode), k
-                assert isinstance(v, unicode), v
+            for k, v in list(params.items()):
+                assert isinstance(k, str), k
+                assert isinstance(v, str), v
                 if not path.endswith(b'?'):
                     path += b'&'
                 k = quote(k.encode('utf-8'), safe=b'')
@@ -148,7 +150,7 @@ class TahoeConnection(object):
         return self._get_response(req, False)
 
     def get_info(self, path, iscap=False):
-        f = self._get(path, {u't': u'json'}, iscap=iscap)
+        f = self._get(path, {'t': 'json'}, iscap=iscap)
         try:
             data = json.load(f)
         finally:
@@ -173,7 +175,7 @@ class TahoeConnection(object):
             f.close()
 
     def mkdir(self, path, iscap=False):
-        f = self._post(path, params={u't': u'mkdir'}, iscap=iscap)
+        f = self._post(path, params={'t': 'mkdir'}, iscap=iscap)
         try:
             return f.read().decode('utf-8').strip()
         finally:

@@ -4,22 +4,22 @@ import shutil
 import random
 import threading
 
-from nose.tools import assert_equal, assert_raises
+from .tools import assert_equal, assert_raises
 
 from tahoestaticfs.crypto import CryptFile
 
 
 class TestCryptFile(object):
-    def setUp(self):
+    def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         self.file_name = os.path.join(self.tmpdir, 'test.dat')
 
-    def tearDown(self):
+    def teardown_method(self):
         shutil.rmtree(self.tmpdir)
 
     def test_create(self):
         # Test file creation in the different modes
-        key = 'a'*32
+        key = b'a'*32
 
         f = CryptFile(self.file_name, key=key, mode='w+b', block_size=32)
         f.write(b'foo')
@@ -49,7 +49,7 @@ class TestCryptFile(object):
         file_name = self.file_name
         file_size = 1000000
         test_data = os.urandom(file_size)
-        key = "a"*32
+        key = b"a"*32
 
         f = CryptFile(file_name, key=key, mode='w+b')
         f.write(test_data)
@@ -116,18 +116,18 @@ class TestCryptFile(object):
     def test_locking(self):
         # Check that POSIX locking serializes access to the file
 
-        key = "a"*32
+        key = b"a"*32
         last_data = [None]
 
         def run():
             f = CryptFile(self.file_name, key=key, mode='r+b', block_size=32)
             f.truncate(0)
-            last_data[0] = str(random.getrandbits(128))
+            last_data[0] = os.urandom(16)
             f.write(last_data[0])
             f.close()
 
         f = CryptFile(self.file_name, key=key, mode='w+b', block_size=32)
-        last_data[0] = str(random.getrandbits(128))
+        last_data[0] = os.urandom(16)
         f.write(last_data[0])
 
         threads = [threading.Thread(target=run) for j in range(32)]

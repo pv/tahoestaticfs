@@ -1,29 +1,29 @@
 import os
 import shutil
 import tempfile
-from StringIO import StringIO
+from io import StringIO
 
-from nose.tools import assert_equal
+from .tools import assert_equal
 
 from tahoestaticfs.cachedb import json_zlib_load, json_zlib_dump
 from tahoestaticfs.crypto import CryptFile
 
 
 class TestJsonZlib(object):
-    def setUp(self):
+    def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         self.file_name = os.path.join(self.tmpdir, 'test.dat')
 
-    def tearDown(self):
+    def teardown_method(self):
         shutil.rmtree(self.tmpdir)
 
     def test_roundtrip(self):
-        key = "a"*32
+        key = b"a"*32
         with CryptFile(self.file_name, key, 'w+b') as fp:
             for sz in [1, 2, 10, 100, 1000, 10000]:
                 data = {
-                    u'a': [u'b']*sz,
-                    u'b': [u'c']*sz
+                    'a': ['b']*sz,
+                    'b': ['c']*sz
                 }
 
                 fp.truncate(0)

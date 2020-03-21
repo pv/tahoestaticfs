@@ -27,7 +27,7 @@ class CacheDB(object):
         if not os.path.isdir(path):
             raise IOError(errno.ENOENT, "Cache directory is not an existing directory")
 
-        assert isinstance(rootcap, unicode)
+        assert isinstance(rootcap, str)
 
         self.cache_size = cache_size
         self.cache_data = cache_data
@@ -111,7 +111,7 @@ class CacheDB(object):
         # HKDF private key material for per-file keys
         return key, salt_hkdf
 
-    def _walk_cache_subtree(self, root_upath=u""):
+    def _walk_cache_subtree(self, root_upath=""):
         """
         Walk through items in the cached directory tree, starting from
         the given root point.
@@ -139,8 +139,8 @@ class CacheDB(object):
             try:
                 with CryptFile(fn, key=key, mode='rb') as f:
                     data = json_zlib_load(f)
-                    if data[0] == u'dirnode':
-                        children = data[1].get(u'children', {}).items()
+                    if data[0] == 'dirnode':
+                        children = list(data[1].get('children', {}).items())
                     else:
                         children = []
             except (IOError, OSError, ValueError):
@@ -150,11 +150,11 @@ class CacheDB(object):
 
             for c_fn, c_info in children:
                 c_upath = os.path.join(upath, c_fn)
-                if c_info[0] == u'dirnode':
+                if c_info[0] == 'dirnode':
                     c_fn, c_key = self.get_filename_and_key(c_upath)
                     if os.path.isfile(c_fn):
                         stack.append((c_upath, c_fn, c_key))
-                elif c_info[0] == u'filenode':
+                elif c_info[0] == 'filenode':
                     for ext in (None, b'state', b'data'):
                         c_fn, c_key = self.get_filename_and_key(c_upath, ext=ext)
                         yield (os.path.basename(c_fn), c_upath)
@@ -185,9 +185,9 @@ class CacheDB(object):
                 else:
                     tot_size += st.st_size
 
-    def _invalidate(self, root_upath=u"", shallow=False):
-        if root_upath == u"" and not shallow:
-            for f in self.open_items.itervalues():
+    def _invalidate(self, root_upath="", shallow=False):
+        if root_upath == "" and not shallow:
+            for f in self.open_items.values():
                 f.invalidated = True
             self.open_items = {}
             dead_file_set = os.listdir(self.path)
@@ -208,7 +208,7 @@ class CacheDB(object):
             if os.path.isfile(fn):
                 os.unlink(fn)
 
-    def invalidate(self, root_upath=u"", shallow=False):
+    def invalidate(self, root_upath="", shallow=False):
         with self.lock:
             self._invalidate(root_upath, shallow=shallow)
 
@@ -262,7 +262,7 @@ class CacheDB(object):
         if c.upath is not None and c.dirty:
             parent = self.open_dir(udirname(c.upath), io, lifetime=self.write_lifetime)
             try:
-                parent_cap = parent.inode.info[1][u'rw_uri']
+                parent_cap = parent.inode.info[1]['rw_uri']
 
                 # Upload
                 try:
@@ -281,7 +281,7 @@ class CacheDB(object):
                 self.close_dir(parent)
 
     def unlink(self, upath, io, is_dir=False):
-        if upath == u'':
+        if upath == '':
             raise IOError(errno.EACCES, "cannot unlink root directory")
 
         with self.lock:
@@ -301,9 +301,9 @@ class CacheDB(object):
             # Perform unlink
             parent = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
             try:
-                parent_cap = parent.inode.info[1][u'rw_uri']
+                parent_cap = parent.inode.info[1]['rw_uri']
 
-                upath_cap = parent_cap + u'/' + ubasename(upath)
+                upath_cap = parent_cap + '/' + ubasename(upath)
                 try:
                     cap = io.delete(upath_cap, iscap=True)
                 except (HTTPError, IOError) as err:
@@ -317,14 +317,14 @@ class CacheDB(object):
                 self.close_dir(parent)
 
     def mkdir(self, upath, io):
-        if upath == u'':
+        if upath == '':
             raise IOError(errno.EEXIST, "cannot re-mkdir root directory")
 
         with self.lock:
             # Check that parent exists
             parent = self.open_dir(udirname(upath), io, lifetime=self.write_lifetime)
             try:
-                parent_cap = parent.inode.info[1][u'rw_uri']
+                parent_cap = parent.inode.info[1]['rw_uri']
 
                 # Check that the target does not exist
                 try:
@@ -341,7 +341,7 @@ class CacheDB(object):
                 self.invalidate(upath)
 
                 # Perform operation
-                upath_cap = parent_cap + u'/' + ubasename(upath)
+                upath_cap = parent_cap + '/' + ubasename(upath)
                 try:
                     cap = io.mkdir(upath_cap, iscap=True)
                 except (HTTPError, IOError) as err:
@@ -353,7 +353,7 @@ class CacheDB(object):
                 self.close_dir(parent)
 
     def get_attr(self, upath, io):
-        if upath == u'':
+        if upath == '':
             dir = self.open_dir(upath, io)
             try:
                 info = dir.get_attr()
@@ -396,10 +396,10 @@ class CacheDB(object):
             if upath in self.open_items and self.open_items[upath].is_fresh(lifetime):
                 # shortcut
                 if read_only:
-                    return self.open_items[upath].info[1][u'ro_uri']
+                    return self.open_items[upath].info[1]['ro_uri']
                 else:
-                    return self.open_items[upath].info[1][u'rw_uri']
-            elif upath == u'':
+                    return self.open_items[upath].info[1]['rw_uri']
+            elif upath == '':
                 # root
                 return None
             else:
@@ -497,7 +497,7 @@ class CacheDB(object):
     def get_upath(self, path):
         try:
             path = os.path.normpath(path)
-            return path.replace(os.sep, "/").decode('utf-8').lstrip(u'/')
+            return path.replace(os.sep, "/").decode('utf-8').lstrip('/')
         except UnicodeError:
             raise IOError(errno.ENOENT, "file does not exist")
 
@@ -711,7 +711,7 @@ class CachedFileInode(object):
                     if filecap is not None:
                         self._load_info(filecap, io, iscap=True)
                     else:
-                        self.info = ['file', {u'size': 0}]
+                        self.info = ['file', {'size': 0}]
                         self.dirty = True
                 except IOError as err:
                     os.unlink(filename)
@@ -722,7 +722,7 @@ class CachedFileInode(object):
             self.f_data = CryptFile(filename_data, key=key_data, mode='w+b')
 
             # Block cache on top of data file
-            self.block_cache = BlockCachedFile(self.f_data, self.info[1][u'size'])
+            self.block_cache = BlockCachedFile(self.f_data, self.info[1]['size'])
 
             # Block data state file
             self.f_state = CryptFile(filename_state, key=key_state, mode='w+b')
@@ -743,14 +743,14 @@ class CachedFileInode(object):
     def _save_info(self):
         self.f.truncate(0)
         self.f.seek(0)
-        if u'retrieved' not in self.info[1]:
-            self.info[1][u'retrieved'] = time.time()
+        if 'retrieved' not in self.info[1]:
+            self.info[1]['retrieved'] = time.time()
         json_zlib_dump(self.info, self.f)
 
     def is_fresh(self, lifetime):
-        if u'retrieved' not in self.info[1]:
+        if 'retrieved' not in self.info[1]:
             return True
-        return (self.info[1][u'retrieved'] + lifetime >= time.time())
+        return (self.info[1]['retrieved'] + lifetime >= time.time())
 
     def incref(self):
         with self.cache_lock:
@@ -816,7 +816,7 @@ class CachedFileInode(object):
                         self.stream_data = []
 
                     if self.stream_f is None:
-                        self.stream_f = io.get_content(self.info[1][u'ro_uri'], c_offset, iscap=True)
+                        self.stream_f = io.get_content(self.info[1]['ro_uri'], c_offset, iscap=True)
                         self.stream_offset = c_offset
                         self.stream_data = []
 
@@ -895,7 +895,7 @@ class CachedFileInode(object):
                 upath = self.upath
                 iscap = False
             else:
-                upath = parent_cap + u"/" + ubasename(self.upath)
+                upath = parent_cap + "/" + ubasename(self.upath)
                 iscap = True
 
             fw = Fwrapper(self.block_cache)
@@ -904,8 +904,8 @@ class CachedFileInode(object):
             except (HTTPError, IOError) as err:
                 raise IOError(errno.EFAULT, "I/O error: %s" % (str(err),))
 
-            self.info[1][u'ro_uri'] = filecap
-            self.info[1][u'size'] = self.get_size()
+            self.info[1]['ro_uri'] = filecap
+            self.info[1]['size'] = self.get_size()
             self._save_info()
 
             self.dirty = False
@@ -950,7 +950,7 @@ class CachedDirInode(object):
                 self.info = io.get_info(dircap, iscap=True)
             else:
                 self.info = io.get_info(upath)
-            self.info[1][u'retrieved'] = time.time()
+            self.info[1]['retrieved'] = time.time()
             json_zlib_dump(self.info, f)
         except (HTTPError, IOError, ValueError):
             os.unlink(self.filename)
@@ -963,7 +963,7 @@ class CachedDirInode(object):
             json_zlib_dump(self.info, f)
 
     def is_fresh(self, lifetime):
-        return (self.info[1][u'retrieved'] + lifetime >= time.time())
+        return (self.info[1]['retrieved'] + lifetime >= time.time())
 
     def incref(self):
         with self.lock:
@@ -980,14 +980,14 @@ class CachedDirInode(object):
             self.closed = True
 
     def listdir(self):
-        return list(self.info[1][u'children'].keys())
+        return list(self.info[1]['children'].keys())
 
     def get_attr(self):
         return dict(type='dir')
 
     def get_child_attr(self, childname):
-        assert isinstance(childname, unicode)
-        children = self.info[1][u'children']
+        assert isinstance(childname, str)
+        children = self.info[1]['children']
         if childname not in children:
             raise IOError(errno.ENOENT, "no such entry")
 
@@ -995,24 +995,24 @@ class CachedDirInode(object):
 
         # tahoe:linkcrtime doesn't exist for entries created by "tahoe backup",
         # but explicit 'mtime' and 'ctime' do, so use them.
-        ctime = info[1][u'metadata'].get(u'tahoe', {}).get(u'linkcrtime')
-        mtime = info[1][u'metadata'].get(u'tahoe', {}).get(u'linkcrtime')   # should this be 'linkmotime'?
+        ctime = info[1]['metadata'].get('tahoe', {}).get('linkcrtime')
+        mtime = info[1]['metadata'].get('tahoe', {}).get('linkcrtime')   # should this be 'linkmotime'?
         if ctime is None:
-            ctime = info[1][u'metadata'][u'ctime']
+            ctime = info[1]['metadata']['ctime']
         if mtime is None:
-            mtime = info[1][u'metadata'][u'mtime']
+            mtime = info[1]['metadata']['mtime']
 
-        if info[0] == u'dirnode':
+        if info[0] == 'dirnode':
             return dict(type='dir', 
-                        ro_uri=info[1][u'ro_uri'],
-                        rw_uri=info[1].get(u'rw_uri'),
+                        ro_uri=info[1]['ro_uri'],
+                        rw_uri=info[1].get('rw_uri'),
                         ctime=ctime,
                         mtime=mtime)
-        elif info[0] == u'filenode':
+        elif info[0] == 'filenode':
             return dict(type='file',
-                        size=info[1][u'size'],
-                        ro_uri=info[1][u'ro_uri'],
-                        rw_uri=info[1].get(u'rw_uri'),
+                        size=info[1]['size'],
+                        ro_uri=info[1]['ro_uri'],
+                        rw_uri=info[1].get('rw_uri'),
                         ctime=ctime,
                         mtime=mtime)
         else:
@@ -1024,28 +1024,28 @@ class CachedDirInode(object):
         self.upath = None
 
     def cache_add_child(self, basename, cap, size):
-        children = self.info[1][u'children']
+        children = self.info[1]['children']
 
         if basename in children:
             info = children[basename]
         else:
-            if cap is not None and cap.startswith(u'URI:DIR'):
-                info = [u'dirnode', {u'metadata': {u'tahoe': {u'linkcrtime': time.time()}}}]
+            if cap is not None and cap.startswith('URI:DIR'):
+                info = ['dirnode', {'metadata': {'tahoe': {'linkcrtime': time.time()}}}]
             else:
-                info = [u'filenode', {u'metadata': {u'tahoe': {u'linkcrtime': time.time()}}}]
+                info = ['filenode', {'metadata': {'tahoe': {'linkcrtime': time.time()}}}]
 
-        if info[0] == u'dirnode':
-            info[1][u'ro_uri'] = cap
-            info[1][u'rw_uri'] = cap
-        elif info[0] == u'filenode':
-            info[1][u'ro_uri'] = cap
-            info[1][u'size'] = size
+        if info[0] == 'dirnode':
+            info[1]['ro_uri'] = cap
+            info[1]['rw_uri'] = cap
+        elif info[0] == 'filenode':
+            info[1]['ro_uri'] = cap
+            info[1]['size'] = size
 
         children[basename] = info
         self._save_info()
 
     def cache_remove_child(self, basename):
-        children = self.info[1][u'children']
+        children = self.info[1]['children']
         if basename in children:
             del children[basename]
             self._save_info()
@@ -1060,14 +1060,14 @@ class RandomString(object):
 
     def __getitem__(self, k):
         if isinstance(k, slice):
-            return os.urandom(len(xrange(*k.indices(self.size))))
+            return os.urandom(len(range(*k.indices(self.size))))
         else:
             raise IndexError("invalid index")
 
 
 def json_zlib_dump(obj, fp):
     try:
-        fp.write(zlib.compress(json.dumps(obj), 3))
+        fp.write(zlib.compress(json.dumps(obj).encode('utf-8'), 3))
     except zlib.error:
         raise ValueError("compression error")
 
@@ -1108,11 +1108,11 @@ class ZlibDecompressor(object):
 
 
 def udirname(upath):
-    return u"/".join(upath.split(u"/")[:-1])
+    return "/".join(upath.split("/")[:-1])
 
 
 def ubasename(upath):
-    return upath.split(u"/")[-1]
+    return upath.split("/")[-1]
 
 
 # constants for cache score calculation

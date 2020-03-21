@@ -37,7 +37,7 @@ class CryptFile(object):
         elif mode == 'r+b':
             fd = os.open(path, os.O_RDWR)
         elif mode == 'w+b':
-            fd = os.open(path, os.O_RDWR | os.O_CREAT, 00600)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o0600)
         else:
             raise IOError(errno.EACCES, "Unsupported mode %r" % (mode,))
 
@@ -320,6 +320,6 @@ class NullString(object):
 
     def __getitem__(self, k):
         if isinstance(k, slice):
-            return b"\x00" * len(xrange(*k.indices(self.size)))
+            return b"\x00" * len(range(*k.indices(self.size)))
         else:
             raise IndexError("invalid index")

@@ -5,19 +5,19 @@ import random
 import threading
 import array
 
-from nose.tools import assert_equal, assert_raises
+from .tools import assert_equal, assert_raises
 
 from tahoestaticfs.blockcache import BlockCachedFile, BlockStorage, block_range, ceildiv
 from tahoestaticfs.crypto import CryptFile
 
 
 class TestBlockCachedFile(object):
-    def setUp(self):
+    def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         self.file_name = os.path.join(self.tmpdir, 'test.dat')
         self.cache_data = os.urandom(656)
 
-    def tearDown(self):
+    def teardown_method(self):
         shutil.rmtree(self.tmpdir)
 
     def _do_rw(self, blockfile, offset, length_or_data):
@@ -67,10 +67,10 @@ class TestBlockCachedFile(object):
         f = BlockCachedFile(tmpf, len(self.cache_data), block_size=7)
         data = self._do_read(f, 137, 91)
         assert_equal(data, self.cache_data[137:137+91])
-        self._do_write(f, 131, "a"*31)
+        self._do_write(f, 131, b"a"*31)
         data = self._do_read(f, 130, 91)
         assert_equal(data[0], self.cache_data[130])
-        assert_equal(data[1:32], "a"*31)
+        assert_equal(data[1:32], b"a"*31)
         assert_equal(data[32:], self.cache_data[162:221])
         f.close()
 
@@ -88,7 +88,7 @@ class TestBlockCachedFile(object):
                 a = min(a, file_size-1)
                 b = min(b, file_size)
                 block = self._do_read(f, a, b - a)
-                assert_equal(block, sim_data[a:b].tostring())
+                assert_equal(block, sim_data[a:b].tobytes())
             else:
                 # write op
                 if j % 31 == 0:
@@ -97,7 +97,7 @@ class TestBlockCachedFile(object):
                 else:
                     # at other times, random data
                     block = os.urandom(b - a)
-                sim_data[a:b] = array.array('c', block)
+                sim_data[a:b] = array.array('b', block)
                 self._do_write(f, a, block)
                 file_size = max(file_size, a + len(block))
 
@@ -113,7 +113,7 @@ class TestBlockCachedFile(object):
 
         for k in range(3):
             file_size = len(self.cache_data)
-            sim_data = array.array('c', self.cache_data + "\x00"*(max_file_size-file_size))
+            sim_data = array.array('b', self.cache_data + b"\x00"*(max_file_size-file_size))
             tmpf = tempfile.TemporaryFile()
             f = BlockCachedFile(tmpf, file_size, block_size=7)
             self._do_random_rw(f, sim_data, file_size, max_file_size, count=5000)
@@ -136,10 +136,10 @@ class TestBlockCachedFile(object):
         tmpf = tempfile.TemporaryFile()
         f = BlockCachedFile(tmpf, len(self.cache_data), block_size=7)
 
-        self._do_write(f, len(self.cache_data) + 5, "a"*3)
+        self._do_write(f, len(self.cache_data) + 5, b"a"*3)
 
         data = self._do_read(f, len(self.cache_data) - 1, 1+5+3)
-        assert_equal(data, self.cache_data[-1] + "\x00"*5 + "a"*3)
+        assert_equal(data, self.cache_data[-1:] + b"\x00"*5 + b"a"*3)
         f.close()
 
     def test_truncate(self):
@@ -179,7 +179,7 @@ class TestBlockCachedFile(object):
     def test_save_state(self):
         file_size = len(self.cache_data)
         max_file_size = 2*file_size
-        sim_data = array.array('c', self.cache_data + "\x00"*(max_file_size-file_size))
+        sim_data = array.array('b', self.cache_data + b"\x00"*(max_file_size-file_size))
 
         # Do random I/O on a file
         tmpf = CryptFile(self.file_name, key=b"a"*32, mode='w+b')
@@ -271,7 +271,7 @@ class TestBlockRange(object):
         if start is not None:
             new_data += blocks[start[0]][start[1]:start[2]]
         if mid is not None:
-            for idx in xrange(*mid):
+            for idx in range(*mid):
                 new_data += blocks[idx]
         if end is not None:
             new_data += blocks[end[0]][:end[1]]

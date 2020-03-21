@@ -38,7 +38,7 @@ class BlockStorage(object):
         # correlate with the amount of downloaded data, but
         # compression reduces its correlation with the total size of
         # the file.
-        block_map_data = zlib.compress(self.block_map.tostring(), 9)
+        block_map_data = zlib.compress(self.block_map.tobytes(), 9)
         f.write(struct.pack('<QQ', self.block_size, len(block_map_data)))
         f.write(block_map_data)
 
@@ -55,7 +55,7 @@ class BlockStorage(object):
         except zlib.error:
             raise ValueError("invalid block map data")
         block_map = array.array('l')
-        block_map.fromstring(s)
+        block_map.frombytes(s)
         del s
 
         self = cls.__new__(cls)
@@ -250,14 +250,14 @@ class BlockCachedFile(object):
             # not enough data for full blocks
             return offset, data_list
 
-        data = "".join(data_list)
+        data = b"".join(data_list)
 
         i = 0
         if start is not None:
             # skip initial part
             i = self.block_size - start[1]
 
-        for j in xrange(*mid):
+        for j in range(*mid):
             if j not in self.storage:
                 block = data[i:i+self.block_size]
                 self.storage[j] = block
@@ -320,7 +320,7 @@ class BlockCachedFile(object):
 
         # Write intermediate blocks
         if mid is not None:
-            for idx in xrange(*mid):
+            for idx in range(*mid):
                 self.storage[idx] = data[i:i+self.block_size]
                 i += self.block_size
 
@@ -345,7 +345,7 @@ class BlockCachedFile(object):
 
         # Read intermediate blocks
         if mid is not None:
-            for idx in xrange(*mid):
+            for idx in range(*mid):
                 datas.append(self.storage[idx])
 
         # Read last block
@@ -379,7 +379,7 @@ class BlockCachedFile(object):
         if j >= end_block:
             return None
 
-        for k in xrange(j+1, end_block):
+        for k in range(j+1, end_block):
             if k in self.storage:
                 end = k
                 break
