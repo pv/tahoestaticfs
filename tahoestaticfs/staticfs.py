@@ -77,7 +77,7 @@ class TahoeStaticFS(fuse.Fuse):
             sys.exit(1)
 
         try:
-            node_url = options.node_url.decode(sys.getfilesystemencoding())
+            node_url = options.node_url
         except UnicodeError:
             print("error: invalid node URL")
             sys.exit(1)
@@ -127,7 +127,7 @@ class TahoeStaticFS(fuse.Fuse):
         rootcap = input('Root dircap: ').strip()
 
         try:
-            rootcap = rootcap.decode('ascii')
+            rootcap = rootcap
         except UnicodeError:
             print("error: invalid rootcap (non-ascii characters)")
             sys.exit(1)

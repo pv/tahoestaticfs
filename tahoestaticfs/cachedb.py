@@ -82,11 +82,11 @@ class CacheDB(object):
                 kdf = PBKDF2HMAC(
                     algorithm=hashes.SHA256(),
                     length=32,
-                    salt="b"*len(salt),
+                    salt=b"b"*len(salt),
                     iterations=10000,
                     backend=backend
                 )
-                kdf.derive("a"*len(rootcap.encode('ascii')))
+                kdf.derive(b"a"*len(rootcap.encode('ascii')))
                 count += 10000
                 if time.time() > start + 0.05:
                     break
@@ -495,9 +495,10 @@ class CacheDB(object):
         return self.get_upath(os.path.dirname(os.path.normpath(path)))
 
     def get_upath(self, path):
+        assert isinstance(path, str)
         try:
             path = os.path.normpath(path)
-            return path.replace(os.sep, "/").decode('utf-8').lstrip('/')
+            return path.replace(os.sep, "/").lstrip('/')
         except UnicodeError:
             raise IOError(errno.ENOENT, "file does not exist")
 
