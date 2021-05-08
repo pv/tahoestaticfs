@@ -76,11 +76,7 @@ class TahoeStaticFS(fuse.Fuse):
             print(("error: --log-level %r is not a valid log level" % (options.log_level,)))
             sys.exit(1)
 
-        try:
-            node_url = options.node_url
-        except UnicodeError:
-            print("error: invalid node URL")
-            sys.exit(1)
+        node_url = options.node_url
 
         try:
             cache_size = parse_size(options.cache_size)
@@ -125,12 +121,6 @@ class TahoeStaticFS(fuse.Fuse):
         logger.setLevel(log_level)
 
         rootcap = input('Root dircap: ').strip()
-
-        try:
-            rootcap = rootcap
-        except UnicodeError:
-            print("error: invalid rootcap (non-ascii characters)")
-            sys.exit(1)
 
         if not os.path.isdir(options.cache):
             os.makedirs(options.cache)
