@@ -47,7 +47,7 @@ class TahoeConnection(object):
         assert isinstance(base_url, str)
         assert isinstance(rootcap, str)
 
-        self.base_url = (base_url.rstrip('/') + '/uri').encode('utf-8')
+        self.base_url = base_url.rstrip('/') + '/uri'
         self.rootcap = rootcap.encode('utf-8')
 
         self.connections = []
@@ -89,25 +89,24 @@ class TahoeConnection(object):
     def _url(self, path, params={}, iscap=False):
         assert isinstance(path, str), path
 
-        path = path.encode('utf-8')
-        path = quote(path).lstrip(b'/')
+        path = quote(path).lstrip('/')
         if iscap:
-            path = self.base_url + b'/' + path
+            path = self.base_url + '/' + path
         else:
-            path = self.base_url + b'/' + self.rootcap + b'/' + path
+            path = self.base_url + '/' + self.rootcap.decode('ascii') + '/' + path
 
         if params:
-            path += b'?'
+            path += '?'
 
             for k, v in list(params.items()):
                 assert isinstance(k, str), k
                 assert isinstance(v, str), v
-                if not path.endswith(b'?'):
-                    path += b'&'
-                k = quote(k.encode('utf-8'), safe=b'')
-                v = quote(v.encode('utf-8'), safe=b'')
+                if not path.endswith('?'):
+                    path += '&'
+                k = quote(k, safe='')
+                v = quote(v, safe='')
                 path += k
-                path += b'='
+                path += '='
                 path += v
 
         return path

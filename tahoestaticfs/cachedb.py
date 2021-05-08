@@ -9,6 +9,7 @@ import zlib
 import struct
 import errno
 import threading
+import codecs
 import heapq
 
 from cryptography.hazmat.primitives import hashes, hmac
@@ -527,7 +528,7 @@ class CacheDB(object):
         # Generate filename
         h = hmac.HMAC(key=data[32:], algorithm=hashes.SHA512(), backend=backend)
         h.update(info)
-        fn = h.finalize().encode('hex')
+        fn = codecs.encode(h.finalize(), 'hex_codec').decode('ascii')
         return os.path.join(self.path, fn), key
 
 
