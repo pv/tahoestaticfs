@@ -32,7 +32,7 @@ Usage
     
     Dircap of the root directory is read from stdin on startup. In scripts, do::
     
-        awk '/^root:/ {print $2}' < ~/.tahoe/private/aliases \
+        awk '/^root:/ {print $2}' < ~/.tahoe/private/aliases \\
             | tahoestaticfs ...
     
     Cache can be invalidated by `touch <mountpoint>/.tahoestaticfs-invalidate`,
@@ -58,7 +58,7 @@ Usage
 
 For example::
 
-    awk '/^root:/ {print $2}' < ~/.tahoe/private/aliases \
+    awk '/^root:/ {print $2}' < ~/.tahoe/private/aliases \\
         tahoestaticfs -c /var/cache/tahoefscache -D -S 5G -u http://127.0.0.1:8090 /mnt/tahoestatic
 
 .. warning::
