@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "tahoestaticfs"
+description = "Fuse filesystem on Tahoe-LAFS"
+readme = "README.rst"
+requires-python = ">=3.7"
+license = {text = "AGPLv3+"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)"
+]
+dependencies = [
+    "fuse-python>=0.2",
+    "cryptography>=0.5"
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+my-script = "tahoestaticfs.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tahoestaticfs"]
+
+[tool.setuptools_scm]
+write_to = "tahoestaticfs/_version.py"

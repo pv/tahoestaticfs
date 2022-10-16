@@ -2,4 +2,4 @@
 *.pyc
 .coverage
 /cover
-/tahoestaticfs/version.py
+/tahoestaticfs/_version.py
