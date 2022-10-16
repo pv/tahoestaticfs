@@ -19,7 +19,7 @@ import fuse
 import logging
 
 from tahoestaticfs.staticfs import TahoeStaticFS
-from tahoestaticfs.version import __version__
+from . import __version__
 
 fuse.fuse_python_api = (0, 2)
 
