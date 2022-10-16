@@ -19,6 +19,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.urls]
+Source = "https://github.com/pv/tahoestaticfs"
+
 [project.optional-dependencies]
 test = ["pytest"]
 
