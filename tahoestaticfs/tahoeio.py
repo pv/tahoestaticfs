@@ -112,19 +112,19 @@ class TahoeConnection(object):
         return path
 
     def _get_request(self, method, path, offset=None, length=None, data=None, params={}, iscap=False):
-        headers = {b'Accept': b'text/plain'}
+        headers = {'Accept': 'text/plain'}
 
         if offset is not None or length is not None:
             if offset is None:
-                start = b"0"
+                start = "0"
                 offset = 0
             else:
-                start = str(offset).encode('utf-8')
+                start = str(offset)
             if length is None:
-                end = b""
+                end = ""
             else:
-                end = str(offset + length - 1).encode('utf-8')
-            headers['Range'] = b'bytes=' + start + b'-' + end
+                end = str(offset + length - 1)
+            headers['Range'] = 'bytes=' + start + '-' + end
 
         req = Request(self._url(path, params, iscap=iscap),
                       data=data,

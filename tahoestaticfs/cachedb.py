@@ -504,7 +504,7 @@ class CacheDB(object):
             raise IOError(errno.ENOENT, "file does not exist")
 
     def path_from_upath(self, upath):
-        return upath.encode('utf-8').replace("/", os.sep)
+        return upath.replace(os.sep, "/")
 
     def get_filename_and_key(self, upath, ext=None):
         path = upath.encode('utf-8')

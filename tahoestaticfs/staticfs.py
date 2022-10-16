@@ -140,8 +140,8 @@ class TahoeStaticFS(fuse.Fuse):
     def readdir(self, path, offset):
         upath = self.cache.get_upath(path)
 
-        entries = [fuse.Direntry(b'.'), 
-                   fuse.Direntry(b'..')]
+        entries = [fuse.Direntry('.'),
+                   fuse.Direntry('..')]
 
         f = self.cache.open_dir(upath, self.io)
         try:
